@@ -1,20 +1,13 @@
 {
-  "name": "mcp-sampling",
+  "name": "mcp-low-level-server-streamable-http",
+  "author": "Gisela Torres",
   "version": "0.1.0",
-  "description": "Sampling demo",
+  "description": "A low-level server implementation using the Model Context Protocol (MCP) with streamable HTTP support.",
   "private": true,
-  "type": "module",
-  "bin": {
-    "mcp-sampling": "./build/index.js"
-  },
-  "files": [
-    "build"
-  ],
+  "type": "module",  
   "scripts": {
     "start": "node build/index.js",
     "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
-    "prepare": "npm run build",
-    "watch": "tsc --watch",
     "inspector": "npx @modelcontextprotocol/inspector build/index.js"
   },
   "dependencies": {

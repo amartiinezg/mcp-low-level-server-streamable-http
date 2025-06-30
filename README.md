@@ -1,70 +1,75 @@
-# mcp-sampling MCP Server
+# Cómo crear un servidor MCP usando Low-Level Server y Streameable HTTP 🚀
 
-Sampling demo
+Este es un servidor MCP basado en TypeScript que implementa un sistema sencillo de notas. Demuestra conceptos clave de MCP proporcionando:
 
-This is a TypeScript-based MCP server that implements a simple notes system. It demonstrates core MCP concepts by providing:
+- 📄 Recursos que representan notas de texto con URIs y metadatos
+- 🛠️ Herramientas para crear nuevas notas
+- 💡 Prompts para generar resúmenes de notas
 
-- Resources representing text notes with URIs and metadata
-- Tools for creating new notes
-- Prompts for generating summaries of notes
+## Características
 
-## Features
+### Recursos
 
-### Resources
-- List and access notes via `note://` URIs
-- Each note has a title, content and metadata
-- Plain text mime type for simple content access
+- Lista y accede a notas mediante URIs `note://`
+- Cada nota tiene título, contenido y metadatos
+- Tipo MIME de texto plano para acceso sencillo al contenido
 
-### Tools
-- `create_note` - Create new text notes
-  - Takes title and content as required parameters
-  - Stores note in server state
+### Herramientas
+
+- `create_note` - Crea nuevas notas de texto
+  - Requiere título y contenido como parámetros obligatorios
+  - Almacena la nota en el estado del servidor
 
 ### Prompts
-- `summarize_notes` - Generate a summary of all stored notes
-  - Includes all note contents as embedded resources
-  - Returns structured prompt for LLM summarization
 
-## Development
+- `summarize_notes` - Genera un resumen de todas las notas almacenadas
+  - Incluye todos los contenidos de las notas como recursos embebidos
+  - Devuelve un prompt estructurado para la resumir con LLM
 
-Install dependencies:
+## Desarrollo
+
+Instala las dependencias:
+
 ```bash
 npm install
 ```
 
-Build the server:
+Compila el servidor:
+
 ```bash
 npm run build
 ```
 
-For development with auto-rebuild:
+Inicia el servidor:
+
 ```bash
-npm run watch
+npm start
 ```
 
-## Installation
+## Instalación
 
-To use with Claude Desktop, add the server config:
+Para usar con Claude Desktop, añade la configuración del servidor:
 
-On MacOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
+En MacOS: `~/Library/Application Support/Claude/claude_desktop_config.json`  
+En Windows: `%APPDATA%/Claude/claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
-    "mcp-sampling": {
-      "command": "/path/to/mcp-sampling/build/index.js"
+    "mcp-low-level-server-streamable-http": {
+      "type": "http",
+      "url": "http://localhost:3001/mcp"
     }
   }
 }
 ```
 
-### Debugging
+### Debugging 🐞
 
-Since MCP servers communicate over stdio, debugging can be challenging. We recommend using the [MCP Inspector](https://github.com/modelcontextprotocol/inspector), which is available as a package script:
+Como los servidores MCP se comunican por stdio, depurar puede ser complicado. Recomendamos usar el [MCP Inspector](https://github.com/modelcontextprotocol/inspector), disponible como script de npm:
 
 ```bash
 npm run inspector
 ```
 
-The Inspector will provide a URL to access debugging tools in your browser.
+El Inspector te dará una URL para acceder a herramientas de depuración en tu navegador.

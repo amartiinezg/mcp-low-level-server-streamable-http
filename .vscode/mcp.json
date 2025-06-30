@@ -1,6 +1,6 @@
 {
   "servers": {
-    "mcp-sampling": {
+    "mcp-low-level-server-streamable-http": {
       "type": "http",
       "url": "http://localhost:3001/mcp",
     }
