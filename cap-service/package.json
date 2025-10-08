@@ -5,25 +5,28 @@
   "main": "srv/catalog-service.js",
   "scripts": {
     "start": "cds run --port 4004",
-    "deploy": "cds deploy --to sqlite",
+    "deploy": "cds deploy --to sqlite:data/db.sqlite",
     "build": "cds build --production",
     "watch": "cds watch --port 4004"
   },
   "dependencies": {
     "@sap/cds": "^9.4.2",
+    "@sap/cds-dk": "^9.3.2",
     "@cap-js/sqlite": "^2.0.3",
     "express": "^4.1.0"
   },
   "devDependencies": {
-    "@sap/cds-dk": "^9.3.2"
   },
   "cds": {
     "requires": {
       "db": {
         "kind": "sqlite",
         "credentials": {
-          "url": "db.sqlite"
+          "url": "data/db.sqlite"
         }
+      },
+      "auth": {
+        "kind": "mocked"
       }
     },
     "sql": {

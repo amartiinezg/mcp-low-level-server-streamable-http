@@ -35,7 +35,9 @@ RUN npm ci --omit=dev
 # Copiar código desde builder
 COPY --from=builder /app/db ./db
 COPY --from=builder /app/srv ./srv
-COPY --from=builder /app/db.sqlite ./db.sqlite
+
+# Crear directorio para datos persistentes y asegurar permisos
+RUN mkdir -p /app/data && chown -R node:node /app/data
 
 # Variables de entorno
 ENV NODE_ENV=production
@@ -48,5 +50,9 @@ EXPOSE 4004
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD node -e "require('http').get('http://localhost:4004/', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-# Comando de inicio
-CMD ["npm", "start"]
+# Comando de inicio con inicialización inline
+CMD sh -c 'mkdir -p /app/data && \
+    echo "📦 Desplegando/verificando base de datos..." && \
+    npm run deploy && \
+    echo "🚀 Iniciando CAP service..." && \
+    npm start'

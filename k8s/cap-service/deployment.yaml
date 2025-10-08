@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
       - name: cap-service
-        image: docker.io/amartiinezg/cap-service:v1.0.0
+        image: docker.io/amartiinezg/cap-service:v1.0.5
         imagePullPolicy: Always
         ports:
         - containerPort: 4004
@@ -40,24 +40,23 @@ spec:
             cpu: "500m"
         livenessProbe:
           httpGet:
-            path: /
+            path: /odata/v4/catalog
+            port: 4004
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /odata/v4/catalog
             port: 4004
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
-        readinessProbe:
-          httpGet:
-            path: /
-            port: 4004
-          initialDelaySeconds: 10
-          periodSeconds: 5
-          timeoutSeconds: 3
-          failureThreshold: 3
         volumeMounts:
         - name: data
-          mountPath: /app/db.sqlite
-          subPath: db.sqlite
+          mountPath: /app/data
       volumes:
       - name: data
         persistentVolumeClaim:
