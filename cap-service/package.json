@@ -22,7 +22,7 @@
       "db": {
         "kind": "sqlite",
         "credentials": {
-          "url": "data/db.sqlite"
+          "url": "db.sqlite"
         }
       }
     },
