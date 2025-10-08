@@ -1,0 +1,19 @@
+apiVersion: gateway.kyma-project.io/v1beta1
+kind: APIRule
+metadata:
+  name: mcp-service-api
+  namespace: mcp-cap-integration
+  labels:
+    app: mcp-service
+spec:
+  gateway: kyma-gateway.kyma-system.svc.cluster.local
+  host: mcp-service
+  service:
+    name: mcp-service
+    port: 3001
+  rules:
+    - path: /.*
+      methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+      accessStrategies:
+        - handler: noop
+      mutators: []

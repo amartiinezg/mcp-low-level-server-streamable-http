@@ -1,0 +1,33 @@
+{
+  "name": "cap-catalog-service",
+  "version": "1.0.0",
+  "description": "CAP OData service for product catalog and order management",
+  "main": "srv/catalog-service.js",
+  "scripts": {
+    "start": "cds run --port 4004",
+    "deploy": "cds deploy --to sqlite",
+    "build": "cds build --production",
+    "watch": "cds watch --port 4004"
+  },
+  "dependencies": {
+    "@sap/cds": "^9.4.2",
+    "@cap-js/sqlite": "^2.0.3",
+    "express": "^4.1.0"
+  },
+  "devDependencies": {
+    "@sap/cds-dk": "^9.3.2"
+  },
+  "cds": {
+    "requires": {
+      "db": {
+        "kind": "sqlite",
+        "credentials": {
+          "url": "data/db.sqlite"
+        }
+      }
+    },
+    "sql": {
+      "native_hana_associations": false
+    }
+  }
+}

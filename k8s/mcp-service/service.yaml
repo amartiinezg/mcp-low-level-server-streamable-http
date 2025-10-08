@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcp-service
+  namespace: mcp-cap-integration
+  labels:
+    app: mcp-service
+spec:
+  selector:
+    app: mcp-service
+  ports:
+  - name: http
+    protocol: TCP
+    port: 3001
+    targetPort: 3001
+  type: ClusterIP

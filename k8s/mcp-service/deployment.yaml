@@ -1,32 +1,38 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: mcp-server
-  namespace: mcp-server
+  name: mcp-service
+  namespace: mcp-cap-integration
   labels:
-    app: mcp-server
+    app: mcp-service
+    version: v1
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: mcp-server
+      app: mcp-service
+      version: v1
   template:
     metadata:
       labels:
-        app: mcp-server
+        app: mcp-service
+        version: v1
     spec:
       containers:
-      - name: mcp-server
-        image: docker.io/amartiinezg/mcp-low-level-server:latest  # CAMBIAR ESTO
+      - name: mcp-service
+        image: docker.io/amartiinezg/mcp-service:v1.0.0
         imagePullPolicy: Always
         ports:
         - containerPort: 3001
           name: http
+          protocol: TCP
         env:
-        - name: PORT
-          value: "3001"
         - name: NODE_ENV
           value: "production"
+        - name: PORT
+          value: "3001"
+        - name: CAP_SERVICE_URL
+          value: "http://cap-service:4004"
         resources:
           requests:
             memory: "256Mi"
@@ -40,24 +46,13 @@ spec:
             port: 3001
           initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
         readinessProbe:
           httpGet:
-            path: /health
+            path: /ready
             port: 3001
           initialDelaySeconds: 10
           periodSeconds: 5
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: mcp-server
-  namespace: mcp-server
-spec:
-  selector:
-    app: mcp-server
-  ports:
-  - name: http
-    protocol: TCP
-    port: 80
-    targetPort: 3001
-  type: ClusterIP
+          timeoutSeconds: 3
+          failureThreshold: 3

@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mcp-cap-integration
+  labels:
+    name: mcp-cap-integration
+    istio-injection: enabled

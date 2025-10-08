@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cap-service
+  namespace: mcp-cap-integration
+  labels:
+    app: cap-service
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cap-service
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: cap-service
+        version: v1
+    spec:
+      containers:
+      - name: cap-service
+        image: docker.io/amartiinezg/cap-service:v1.0.0
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 4004
+          name: http
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "4004"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 4004
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 4004
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: data
+          mountPath: /app/db.sqlite
+          subPath: db.sqlite
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: cap-service-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cap-service-pvc
+  namespace: mcp-cap-integration
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

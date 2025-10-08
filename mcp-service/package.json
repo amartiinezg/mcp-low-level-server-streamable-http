@@ -1,0 +1,23 @@
+{
+  "name": "mcp-server-http",
+  "version": "1.0.0",
+  "description": "MCP server with HTTP transport and CAP OData integration",
+  "main": "build/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node build/index.js",
+    "build": "tsc",
+    "dev": "tsc && node build/index.js",
+    "inspector": "npx @modelcontextprotocol/inspector build/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.13.2",
+    "axios": "^1.7.9",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^24.0.7",
+    "typescript": "^5.9.3"
+  }
+}
