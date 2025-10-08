@@ -29,6 +29,7 @@ import {
 
 import { randomUUID } from "node:crypto";
 import express, { Request, Response } from "express";
+import { CAPClient } from "./cap-integration.js";
 
 /**
  * Tipo para una nota.
@@ -50,6 +51,9 @@ app.use(express.json());
 
 // Mapa de transports por sesión
 const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
+
+// 🔗 Cliente CAP para interactuar con OData
+const capClient = new CAPClient(process.env.CAP_SERVICE_URL || "http://localhost:4004");
 
 // 🛠️ Crea el servidor MCP con capacidades de recursos, herramientas y prompts
 const server = new Server(
@@ -105,7 +109,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 });
 
 /**
- * 🛠️ Handler para listar herramientas disponibles (solo "create_note").
+ * 🛠️ Handler para listar herramientas disponibles.
  */
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
@@ -128,12 +132,80 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["title", "content"],
         },
       },
+      {
+        name: "cap_list_products",
+        description: "Lista todos los productos disponibles en el catálogo OData de CAP",
+        inputSchema: {
+          type: "object",
+          properties: {
+            filterByLowStock: {
+              type: "boolean",
+              description: "Si es true, filtra solo productos con bajo stock (menos de 10 unidades)",
+            },
+            threshold: {
+              type: "number",
+              description: "Umbral de stock para filtrar (solo si filterByLowStock es true)",
+            },
+          },
+        },
+      },
+      {
+        name: "cap_create_order",
+        description: "Crea una nueva orden de compra en el sistema CAP con productos específicos",
+        inputSchema: {
+          type: "object",
+          properties: {
+            customerName: {
+              type: "string",
+              description: "Nombre del cliente que realiza la orden",
+            },
+            items: {
+              type: "array",
+              description: "Lista de productos a ordenar con sus cantidades",
+              items: {
+                type: "object",
+                properties: {
+                  productId: {
+                    type: "string",
+                    description: "UUID del producto",
+                  },
+                  quantity: {
+                    type: "number",
+                    description: "Cantidad de unidades a ordenar",
+                  },
+                },
+                required: ["productId", "quantity"],
+              },
+            },
+          },
+          required: ["customerName", "items"],
+        },
+      },
+      {
+        name: "cap_update_order_status",
+        description: "Actualiza el estado de una orden existente en el sistema CAP",
+        inputSchema: {
+          type: "object",
+          properties: {
+            orderId: {
+              type: "string",
+              description: "UUID de la orden a actualizar",
+            },
+            newStatus: {
+              type: "string",
+              description: "Nuevo estado de la orden",
+              enum: ["PENDING", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED"],
+            },
+          },
+          required: ["orderId", "newStatus"],
+        },
+      },
     ],
   };
 });
 
 /**
- * 📝 Handler para la herramienta "create_note".
+ * 📝 Handler para las herramientas (tools).
  */
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   switch (request.params.name) {
@@ -155,6 +227,116 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           },
         ],
       };
+    }
+
+    case "cap_list_products": {
+      try {
+        const filterByLowStock = request.params.arguments?.filterByLowStock as boolean;
+        const threshold = request.params.arguments?.threshold as number;
+
+        let products;
+        if (filterByLowStock) {
+          products = await capClient.getLowStockProducts(threshold || 10);
+        } else {
+          products = await capClient.getProducts();
+        }
+
+        const productList = products.map((p: any) =>
+          `- ${p.name} (${p.category})\n  Precio: $${p.price} | Stock: ${p.stock} unidades\n  ID: ${p.ID}`
+        ).join('\n\n');
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `📦 Productos encontrados: ${products.length}\n\n${productList || 'No hay productos disponibles'}`,
+            },
+          ],
+        };
+      } catch (error: any) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `❌ Error al obtener productos: ${error.message}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+
+    case "cap_create_order": {
+      try {
+        const customerName = String(request.params.arguments?.customerName);
+        const items = request.params.arguments?.items as Array<{ productId: string; quantity: number }>;
+
+        if (!customerName || !items || items.length === 0) {
+          throw new Error("customerName e items son requeridos");
+        }
+
+        const result = await capClient.createCompleteOrder(customerName, items);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `✅ Orden creada exitosamente!\n\n` +
+                    `📋 Número de Orden: ${result.orderNumber}\n` +
+                    `🆔 ID: ${result.orderId}\n` +
+                    `💰 Total: $${result.totalAmount}\n` +
+                    `👤 Cliente: ${customerName}\n` +
+                    `📦 Productos: ${items.length} ítems`,
+            },
+          ],
+        };
+      } catch (error: any) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `❌ Error al crear orden: ${error.message}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+
+    case "cap_update_order_status": {
+      try {
+        const orderId = String(request.params.arguments?.orderId);
+        const newStatus = String(request.params.arguments?.newStatus);
+
+        if (!orderId || !newStatus) {
+          throw new Error("orderId y newStatus son requeridos");
+        }
+
+        const updatedOrder = await capClient.updateOrderStatus(orderId, newStatus);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `✅ Estado de orden actualizado!\n\n` +
+                    `📋 Orden: ${updatedOrder.orderNumber}\n` +
+                    `🔄 Nuevo Estado: ${updatedOrder.status}\n` +
+                    `👤 Cliente: ${updatedOrder.customerName}\n` +
+                    `💰 Total: $${updatedOrder.totalAmount}`,
+            },
+          ],
+        };
+      } catch (error: any) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `❌ Error al actualizar estado de orden: ${error.message}`,
+            },
+          ],
+          isError: true,
+        };
+      }
     }
 
     default:
@@ -218,6 +400,29 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 });
 
 /**************** Fin de la configuración del servidor MCP ****************/
+
+/**
+ * 🏥 Health check endpoint para Kubernetes liveness probe
+ */
+app.get("/health", (req: Request, res: Response) => {
+  res.status(200).json({
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    notesCount: Object.keys(notes).length,
+    activeSessions: Object.keys(transports).length
+  });
+});
+
+/**
+ * 🏥 Readiness check endpoint para Kubernetes readiness probe
+ */
+app.get("/ready", (req: Request, res: Response) => {
+  res.status(200).json({
+    status: "ready",
+    timestamp: new Date().toISOString()
+  });
+});
 
 /**
  * Endpoint principal MCP (POST).

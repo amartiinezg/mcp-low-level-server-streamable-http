@@ -1,62 +1,77 @@
-# Cómo crear un servidor MCP usando Low-Level Server y Streameable HTTP 🚀🖥️✨
+# Servidor MCP + CAP OData Integration 🚀🖥️✨
 
-Este es un servidor MCP basado en TypeScript que implementa un sistema sencillo de notas. Demuestra conceptos clave de MCP proporcionando:
+Este proyecto integra un servidor MCP (Model Context Protocol) con SAP CAP (Cloud Application Programming Model) para demostrar:
 
-- 📄 Recursos que representan notas de texto con URIs y metadatos
-- 🛠️ Herramientas para crear nuevas notas
-- 💡 Prompts para generar resúmenes de notas
+- 📦 **Servicio OData CAP** - Catálogo de productos con órdenes de compra
+- 🛠️ **3 Herramientas MCP** - Para interactuar con el servicio OData desde Claude Desktop
+- 📄 **Sistema de Notas** - Demo original de MCP con recursos y prompts
+- 🔗 **Integración HTTP** - MCP tools consultando API OData de CAP
+
+> **🎯 Quick Start:** Ver [QUICK-START.md](./QUICK-START.md) para comenzar en 3 pasos
 
 ## Características 🌟
 
-### Recursos 📚
+### Herramientas MCP para CAP OData 🛠️
+
+1. **`cap_list_products`** - Lista productos del catálogo
+   - Parámetro opcional: `filterByLowStock` y `threshold`
+   - Muestra nombre, precio, stock y categoría
+
+2. **`cap_create_order`** - Crea órdenes de compra
+   - Requiere: `customerName` y array de `items` (productId, quantity)
+   - Valida stock disponible automáticamente
+   - Actualiza inventario tras crear la orden
+
+3. **`cap_update_order_status`** - Actualiza estado de órdenes
+   - Requiere: `orderId` y `newStatus`
+   - Estados: PENDING, PROCESSING, SHIPPED, DELIVERED, CANCELLED
+
+### Modelo de Datos CAP 📊
+
+**Entidades:**
+- `Products` - Catálogo de productos (name, price, stock, category)
+- `Orders` - Órdenes de compra (orderNumber, customer, total, status)
+- `OrderItems` - Ítems de orden (quantity, unitPrice, subtotal)
+- `Customers` - Clientes (name, email, phone, address)
+
+**Datos precargados:** 5 productos de ejemplo al iniciar el servidor
+
+### Recursos MCP (Demo Original) 📚
 
 - 📑 Lista y accede a notas mediante URIs `note://`
-- 🏷️ Cada nota tiene título, contenido y metadatos
-- 📝 Tipo MIME de texto plano para acceso sencillo al contenido
-
-### Herramientas 🧰
-
 - ✍️ `create_note` - Crea nuevas notas de texto
-  - 🏷️ Requiere título y contenido como parámetros obligatorios
-  - 💾 Almacena la nota en el estado del servidor
+- 📝 `summarize_notes` - Genera resumen de todas las notas
 
-### Prompts 🧠
-
-- 📝 `summarize_notes` - Genera un resumen de todas las notas almacenadas
-  - 📥 Incluye todos los contenidos de las notas como recursos embebidos
-  - 📤 Devuelve un prompt estructurado para la resumir con LLM
-
-## Desarrollo 👨‍💻👩‍💻
-
-Instala las dependencias:
+## Instalación Rápida 🚀
 
 ```bash
+# 1. Instalar dependencias
 npm install
-```
 
-Compila el servidor:
-
-```bash
+# 2. Compilar TypeScript
 npm run build
+
+# 3. Inicializar base de datos CAP
+npm run cap:deploy
+
+# 4. Iniciar ambos servicios
+npm run start:all
 ```
 
-Inicia el servidor:
+**Servicios iniciados:**
+- ✅ CAP OData: http://localhost:4004
+- ✅ MCP Server: http://localhost:3001
 
-```bash
-npm start
-```
+## Configuración con Claude Desktop ⚙️
 
-## Instalación ⚙️
-
-Para usar con Claude Desktop, añade la configuración del servidor:
-
-En MacOS: `~/Library/Application Support/Claude/claude_desktop_config.json`  
-En Windows: `%APPDATA%/Claude/claude_desktop_config.json`
+**Archivo de configuración:**
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%/Claude/claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
-    "mcp-low-level-server-streamable-http": {
+    "mcp-cap-integration": {
       "type": "http",
       "url": "http://localhost:3001/mcp"
     }
@@ -64,12 +79,62 @@ En Windows: `%APPDATA%/Claude/claude_desktop_config.json`
 }
 ```
 
-### Debugging 🐞🔍
+Reinicia Claude Desktop y verifica que las herramientas `cap_list_products`, `cap_create_order` y `cap_update_order_status` estén disponibles.
 
-Como los servidores MCP se comunican por stdio, depurar puede ser complicado. Recomendamos usar el [MCP Inspector](https://github.com/modelcontextprotocol/inspector) 🕵️‍♂️, disponible como script de npm:
+## Documentación 📚
 
+- **[QUICK-START.md](./QUICK-START.md)** - Guía de inicio rápido con ejemplos
+- **[README-CAP.md](./README-CAP.md)** - Documentación completa de la integración CAP
+- **[TROUBLESHOOTING.md](./TROUBLESHOOTING.md)** - Solución de problemas comunes
+- **[CLAUDE.md](./CLAUDE.md)** - Guía para Claude Code
+
+## Debugging 🐞
+
+### MCP Inspector
 ```bash
 npm run inspector
 ```
 
-El Inspector te dará una URL 🌐 para acceder a herramientas de depuración en tu navegador.
+### Logs detallados de CAP
+```bash
+DEBUG=cds:* npm run cap:start
+```
+
+### Verificar servicios
+```bash
+# CAP OData
+curl http://localhost:4004/odata/v4/catalog/Products
+
+# MCP Health
+curl http://localhost:3001/health
+```
+
+## Arquitectura 🏗️
+
+```
+┌─────────────────────┐
+│  Claude Desktop     │
+│                     │
+│  - cap_list_products│
+│  - cap_create_order │
+│  - cap_update_...   │
+└──────────┬──────────┘
+           │ HTTP MCP Protocol
+           ↓
+┌─────────────────────┐
+│  MCP Server         │
+│  (port 3001)        │
+│                     │
+│  src/index.ts       │
+│  src/cap-integration│
+└──────────┬──────────┘
+           │ HTTP REST
+           ↓
+┌─────────────────────┐
+│  CAP Server         │
+│  (port 4004)        │
+│                     │
+│  OData v4 Service   │
+│  SQLite Database    │
+└─────────────────────┘
+```
