@@ -30,10 +30,16 @@ export class CAPClient {
    */
   async getProducts() {
     try {
+      console.log(`[CAPClient] Intentando conectar a: ${this.baseUrl}/odata/v4/catalog/Products`);
       const response = await this.client.get('/Products');
+      console.log(`[CAPClient] Productos obtenidos exitosamente: ${response.data.value?.length || 0} productos`);
       return response.data.value || [];
     } catch (error: any) {
-      throw new Error(`Error obteniendo productos: ${error.message}`);
+      console.error(`[CAPClient] Error completo:`, error);
+      console.error(`[CAPClient] URL base configurada: ${this.baseUrl}`);
+      console.error(`[CAPClient] Código de error: ${error.code}`);
+      console.error(`[CAPClient] Respuesta del servidor:`, error.response?.data);
+      throw new Error(`Error obteniendo productos: ${error.message} (${error.code || 'UNKNOWN'}) - URL: ${this.baseUrl}`);
     }
   }
 
@@ -138,10 +144,13 @@ export class CAPClient {
    */
   async getLowStockProducts(threshold: number = 10) {
     try {
+      console.log(`[CAPClient] Obteniendo productos con bajo stock (threshold: ${threshold})`);
       const response = await this.client.get(`/getLowStockProducts?threshold=${threshold}`);
+      console.log(`[CAPClient] Productos con bajo stock obtenidos: ${response.data.value?.length || 0}`);
       return response.data.value || [];
     } catch (error: any) {
-      throw new Error(`Error obteniendo productos con bajo stock: ${error.message}`);
+      console.error(`[CAPClient] Error al obtener productos con bajo stock:`, error);
+      throw new Error(`Error obteniendo productos con bajo stock: ${error.message} (${error.code || 'UNKNOWN'}) - URL: ${this.baseUrl}`);
     }
   }
 

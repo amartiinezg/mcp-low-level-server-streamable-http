@@ -53,7 +53,9 @@ app.use(express.json());
 const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
 
 // 🔗 Cliente CAP para interactuar con OData
-const capClient = new CAPClient(process.env.CAP_SERVICE_URL || "http://localhost:4004");
+const CAP_URL = process.env.CAP_SERVICE_URL || "http://localhost:4004";
+console.log(`🔗 Inicializando CAPClient con URL: ${CAP_URL}`);
+const capClient = new CAPClient(CAP_URL);
 
 // 🛠️ Crea el servidor MCP con capacidades de recursos, herramientas y prompts
 const server = new Server(

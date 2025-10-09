@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(docker build:*)",
+      "Bash(docker push:*)",
+      "Bash(kubectl apply:*)",
+      "Bash(kubectl:*)",
+      "Bash(timeout 60 kubectl --kubeconfig=\"C:\\Users\\amartinez\\projects\\MCP Project\\mcp-low-level-server-streamable-http\\.kubeconfig.yaml\" wait --for=condition=ready pod -l app=mcp-service -n mcp-cap-integration --timeout=60s)",
+      "Bash(curl:*)",
+      "Bash(bash:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
