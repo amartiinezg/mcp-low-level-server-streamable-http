@@ -6,6 +6,7 @@ Servidor MCP (Model Context Protocol) que expone herramientas para interactuar c
 
 - **HTTP Transport** - Streamable HTTP para MCP
 - **Session Management** - Gestión de sesiones con headers
+- **OAuth 2.0 Authentication** - Autenticación JWT con SAP IAS (opcional)
 - **3 Herramientas CAP** - Integración con OData
 - **Health Checks** - Endpoints para Kubernetes
 - **SSE Support** - Server-Sent Events para streaming
@@ -37,11 +38,11 @@ Actualiza el estado de una orden existente.
 
 ## Endpoints HTTP
 
-- `POST /mcp` - Endpoint principal MCP (JSON-RPC)
-- `GET /mcp` - SSE para streaming de eventos MCP
-- `DELETE /mcp` - Terminar sesión MCP
-- `GET /health` - Health check (returns active sessions, notes count)
-- `GET /ready` - Readiness probe
+- `POST /mcp` - Endpoint principal MCP (JSON-RPC) **(requiere autenticación si está habilitada)**
+- `GET /mcp` - SSE para streaming de eventos MCP **(requiere autenticación si está habilitada)**
+- `DELETE /mcp` - Terminar sesión MCP **(requiere autenticación si está habilitada)**
+- `GET /health` - Health check (público, no requiere autenticación)
+- `GET /ready` - Readiness probe (público, no requiere autenticación)
 
 ## Desarrollo Local
 
@@ -66,9 +67,18 @@ npm run inspector
 
 ### Variables de Entorno
 
+**Configuración Básica:**
 - `NODE_ENV` - Entorno (development/production)
 - `PORT` - Puerto del servidor (default: 3001)
 - `CAP_SERVICE_URL` - URL del servicio CAP (default: http://localhost:4004)
+
+**Autenticación OAuth 2.0 (Opcional):**
+- `IAS_ENABLED` - Habilitar autenticación (true/false, default: false)
+- `IAS_ISSUER` - URL del tenant IAS (e.g., https://your-tenant.accounts.ondemand.com)
+- `IAS_JWKS_URI` - URL del JWKS endpoint (default: {IAS_ISSUER}/oauth2/certs)
+- `IAS_AUDIENCE` - Client ID esperado en el token
+
+Ver [docs/IAS_SETUP.md](../docs/IAS_SETUP.md) para configuración completa de OAuth 2.0.
 
 ### Claude Desktop Config
 
@@ -97,6 +107,23 @@ Para Kyma (después del deployment):
   }
 }
 ```
+
+**Con autenticación OAuth 2.0:**
+```json
+{
+  "mcpServers": {
+    "mcp-cap-integration": {
+      "type": "http",
+      "url": "https://mcp-service.{your-kyma-cluster}.kyma.ondemand.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-access-token>"
+      }
+    }
+  }
+}
+```
+
+**Nota:** Para producción, considera implementar un mecanismo de refresh token automático. Ver [docs/IAS_SETUP.md](../docs/IAS_SETUP.md).
 
 ## Docker
 
@@ -158,11 +185,14 @@ kubectl get apirule -n mcp-cap-integration
 mcp-service/
 ├── src/
 │   ├── index.ts              # Servidor MCP principal
-│   └── cap-integration.ts    # Cliente HTTP para CAP
+│   ├── cap-integration.ts    # Cliente HTTP para CAP
+│   └── auth/
+│       └── ias-auth.ts       # Módulo de autenticación OAuth 2.0
 ├── build/                    # Código compilado
 ├── Dockerfile
 ├── tsconfig.json
 ├── package.json
+├── .env.example              # Ejemplo de variables de entorno
 └── README.md
 ```
 

@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
       - name: cap-service
-        image: docker.io/amartiinezg/cap-service:v1.0.5
+        image: docker.io/amartiinezg/cap-service:v2.0.1-oauth
         imagePullPolicy: Always
         ports:
         - containerPort: 4004
@@ -31,6 +31,23 @@ spec:
           value: "production"
         - name: PORT
           value: "4004"
+        - name: IAS_ENABLED
+          value: "true"
+        - name: IAS_ISSUER
+          valueFrom:
+            secretKeyRef:
+              name: ias-credentials
+              key: IAS_ISSUER
+        - name: IAS_JWKS_URI
+          valueFrom:
+            secretKeyRef:
+              name: ias-credentials
+              key: IAS_JWKS_URI
+        - name: IAS_AUDIENCE
+          valueFrom:
+            secretKeyRef:
+              name: ias-credentials
+              key: IAS_AUDIENCE
         resources:
           requests:
             memory: "256Mi"
@@ -40,7 +57,7 @@ spec:
             cpu: "500m"
         livenessProbe:
           httpGet:
-            path: /odata/v4/catalog
+            path: /health
             port: 4004
           initialDelaySeconds: 60
           periodSeconds: 15
@@ -48,7 +65,7 @@ spec:
           failureThreshold: 3
         readinessProbe:
           httpGet:
-            path: /odata/v4/catalog
+            path: /ready
             port: 4004
           initialDelaySeconds: 30
           periodSeconds: 10

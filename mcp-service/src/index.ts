@@ -1,19 +1,25 @@
 /**
  * 📝 MCP (Model Context Protocol) Sample Server
- * 
- * Este archivo implementa un servidor didáctico usando el Model Context Protocol (MCP) 
- * para gestionar notas de texto. Utiliza la Low-Level API del SDK MCP y Express.js 
+ *
+ * Este archivo implementa un servidor didáctico usando el Model Context Protocol (MCP)
+ * para gestionar notas de texto. Utiliza la Low-Level API del SDK MCP y Express.js
  * para exponer endpoints HTTP que permiten listar, leer, crear y resumir notas.
- * 
+ *
  * Características principales:
  * - Almacenamiento en memoria de notas (sin base de datos).
  * - Exposición de recursos (notas) vía MCP.
  * - Herramienta para crear nuevas notas.
  * - Prompt para resumir todas las notas.
  * - Manejo de sesiones MCP vía HTTP (POST, GET, DELETE).
- * 
+ *
  * Ideal para aprender cómo funciona MCP y cómo integrar recursos, herramientas y prompts.
  */
+
+// Cargar variables de entorno desde .env en desarrollo
+import dotenv from 'dotenv';
+if (process.env.NODE_ENV !== 'production') {
+  dotenv.config();
+}
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -30,6 +36,7 @@ import {
 import { randomUUID } from "node:crypto";
 import express, { Request, Response } from "express";
 import { CAPClient } from "./cap-integration.js";
+import { loadIASConfig, initializeJWKSClient, authMiddleware } from "./auth/ias-auth.js";
 
 /**
  * Tipo para una nota.
@@ -48,6 +55,10 @@ const notes: { [id: string]: Note } = {
 // 🚀 Inicializa la app Express
 const app = express();
 app.use(express.json());
+
+// 🔐 Configuración de autenticación IAS
+const iasConfig = loadIASConfig();
+initializeJWKSClient(iasConfig);
 
 // Mapa de transports por sesión
 const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
@@ -428,8 +439,9 @@ app.get("/ready", (req: Request, res: Response) => {
 
 /**
  * Endpoint principal MCP (POST).
+ * Protegido con autenticación OAuth si está habilitada
  */
-app.post("/mcp", async (req, res) => {
+app.post("/mcp", authMiddleware(iasConfig), async (req, res) => {
   console.log("📨 Recibida petición MCP POST");
   console.log("📦 Cuerpo de la petición:", req.body);
 
@@ -491,8 +503,9 @@ app.post("/mcp", async (req, res) => {
 
 /**
  * Endpoint GET para SSE streams (usado por MCP para eventos).
+ * Protegido con autenticación OAuth si está habilitada
  */
-app.get("/mcp", async (req: Request, res: Response) => {
+app.get("/mcp", authMiddleware(iasConfig), async (req: Request, res: Response) => {
   console.error("📥 Recibida petición MCP GET");
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   if (!sessionId || !transports[sessionId]) {
@@ -520,8 +533,9 @@ app.get("/mcp", async (req: Request, res: Response) => {
 
 /**
  * Endpoint DELETE para terminar sesión MCP.
+ * Protegido con autenticación OAuth si está habilitada
  */
-app.delete("/mcp", async (req: Request, res: Response) => {
+app.delete("/mcp", authMiddleware(iasConfig), async (req: Request, res: Response) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   if (!sessionId || !transports[sessionId]) {
     res.status(400).json({

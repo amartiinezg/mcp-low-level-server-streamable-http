@@ -33,6 +33,23 @@ spec:
           value: "3001"
         - name: CAP_SERVICE_URL
           value: "http://cap-service:4004"
+        - name: IAS_ENABLED
+          value: "true"
+        - name: IAS_ISSUER
+          valueFrom:
+            secretKeyRef:
+              name: ias-credentials
+              key: IAS_ISSUER
+        - name: IAS_JWKS_URI
+          valueFrom:
+            secretKeyRef:
+              name: ias-credentials
+              key: IAS_JWKS_URI
+        - name: IAS_AUDIENCE
+          valueFrom:
+            secretKeyRef:
+              name: ias-credentials
+              key: IAS_AUDIENCE
         resources:
           requests:
             memory: "256Mi"

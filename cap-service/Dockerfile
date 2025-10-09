@@ -12,6 +12,7 @@ RUN npm ci
 # Copiar código fuente
 COPY db ./db
 COPY srv ./srv
+COPY server.js ./
 
 # Build CAP (si es necesario)
 RUN npm run build || true
@@ -35,6 +36,7 @@ RUN npm ci --omit=dev
 # Copiar código desde builder
 COPY --from=builder /app/db ./db
 COPY --from=builder /app/srv ./srv
+COPY --from=builder /app/server.js ./server.js
 
 # Crear directorio para datos persistentes y asegurar permisos
 RUN mkdir -p /app/data && chown -R node:node /app/data
@@ -42,6 +44,7 @@ RUN mkdir -p /app/data && chown -R node:node /app/data
 # Variables de entorno
 ENV NODE_ENV=production
 ENV PORT=4004
+ENV IAS_ENABLED=false
 
 # Exponer puerto
 EXPOSE 4004

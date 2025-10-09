@@ -6,9 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MCP (Model Context Protocol) server integrated with SAP CAP (Cloud Application Programming Model) demonstrating:
 - MCP server with Low-Level API and Streamable HTTP transport
+- OAuth 2.0 authentication with SAP Identity Authentication Service (IAS)
 - CAP OData service for e-commerce catalog management
 - 3 MCP tools to interact with CAP OData endpoints
 - Note-taking system (original MCP demo)
+- JWT token validation using JWKS (JSON Web Key Set)
 
 ## Development Commands
 
@@ -43,7 +45,20 @@ The server implements three MCP capability types:
 **Prompts** - Templates for LLM interactions
 - `summarize_notes`: Returns prompt with embedded note resources
 
-### CAP Integration (src/cap-integration.ts)
+### Authentication (mcp-service/src/auth/ias-auth.ts)
+
+OAuth 2.0 authentication using SAP IAS:
+- `loadIASConfig()`: Loads configuration from environment variables
+- `initializeJWKSClient(config)`: Initializes JWKS client for token validation
+- `verifyToken(token, config)`: Validates JWT tokens using public keys from JWKS
+- `authMiddleware(config)`: Express middleware for protecting endpoints
+- `extractToken(req)`: Extracts Bearer token from Authorization header
+
+**Authentication is optional** - controlled by `IAS_ENABLED` environment variable.
+
+See [docs/IAS_SETUP.md](docs/IAS_SETUP.md) for complete OAuth 2.0 setup guide.
+
+### CAP Integration (mcp-service/src/cap-integration.ts)
 
 `CAPClient` class provides HTTP client wrapper for CAP OData service:
 - `getProducts()`: Fetch all products
@@ -51,6 +66,7 @@ The server implements three MCP capability types:
 - `createCompleteOrder(customerName, items)`: Create order with validation and stock updates
 - `updateOrderStatus(orderId, newStatus)`: Update order workflow state
 - Uses Axios for HTTP communication with `/odata/v4/catalog` endpoints
+- Includes detailed error logging with URL and error codes
 
 ### CAP Service (db/schema.cds, srv/catalog-service.cds)
 
@@ -71,15 +87,23 @@ The server implements three MCP capability types:
 - Automatic stock deduction on order creation
 - Price and stock validation on product create/update
 
+### CAP Service Authentication (cap-service/server.js, srv/auth-middleware.js)
+
+OAuth 2.0 authentication for CAP OData endpoints:
+- `server.js`: Custom CAP server bootstrap with authentication middleware
+- `auth-middleware.js`: JWT validation middleware for Express
+- Applies authentication to `/odata/v4/catalog` routes when enabled
+- Uses same JWKS validation as MCP service for consistency
+
 ### HTTP Transport & Session Management
 
 Uses `StreamableHTTPServerTransport` from MCP SDK for HTTP-based sessions:
 
-- **POST /mcp**: Main endpoint for MCP requests. Creates new transport on `initialize` request when no `mcp-session-id` header present
-- **GET /mcp**: SSE (Server-Sent Events) streaming endpoint. Supports reconnection via `last-event-id` header
-- **DELETE /mcp**: Session termination
-- **GET /health**: Kubernetes liveness probe (returns notes count and active sessions)
-- **GET /ready**: Kubernetes readiness probe
+- **POST /mcp**: Main endpoint for MCP requests **(requires authentication if enabled)**
+- **GET /mcp**: SSE (Server-Sent Events) streaming endpoint **(requires authentication if enabled)**
+- **DELETE /mcp**: Session termination **(requires authentication if enabled)**
+- **GET /health**: Kubernetes liveness probe (public, no authentication required)
+- **GET /ready**: Kubernetes readiness probe (public, no authentication required)
 
 **Session lifecycle:**
 1. Client sends `initialize` request without session ID to POST /mcp

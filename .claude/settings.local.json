@@ -8,7 +8,9 @@
       "Bash(kubectl:*)",
       "Bash(timeout 60 kubectl --kubeconfig=\"C:\\Users\\amartinez\\projects\\MCP Project\\mcp-low-level-server-streamable-http\\.kubeconfig.yaml\" wait --for=condition=ready pod -l app=mcp-service -n mcp-cap-integration --timeout=60s)",
       "Bash(curl:*)",
-      "Bash(bash:*)"
+      "Bash(bash:*)",
+      "Bash(npm install:*)",
+      "Bash(chmod:*)"
     ],
     "deny": [],
     "ask": []

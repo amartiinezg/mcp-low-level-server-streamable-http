@@ -35,6 +35,7 @@ COPY --from=builder /app/build ./build
 ENV NODE_ENV=production
 ENV PORT=3001
 ENV CAP_SERVICE_URL=http://cap-service:4004
+ENV IAS_ENABLED=false
 
 # Exponer puerto
 EXPOSE 3001
