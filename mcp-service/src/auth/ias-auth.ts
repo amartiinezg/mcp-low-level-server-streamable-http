@@ -189,6 +189,78 @@ export function authMiddleware(config: IASConfig) {
 }
 
 /**
+ * Middleware de autenticación combinado (acepta JWT o cookie de sesión)
+ * Intenta primero con Authorization header, si falla intenta con cookie de sesión
+ */
+export function combinedAuthMiddleware(config: IASConfig, getTokenFromSession: (sessionId: string) => string | null) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    // Si la autenticación está deshabilitada, continuar sin validar
+    if (!config.enabled) {
+      next();
+      return;
+    }
+
+    try {
+      // 1. Intentar con Authorization header (JWT token)
+      const headerToken = extractToken(req);
+
+      if (headerToken) {
+        try {
+          const payload = await verifyToken(headerToken, config);
+          (req as any).user = payload;
+          console.log(`✅ User authenticated via JWT header: ${payload.email || payload.sub}`);
+          next();
+          return;
+        } catch (error) {
+          // Si el token del header es inválido, no continuar con cookie
+          console.error('❌ JWT header token invalid, trying session cookie...');
+        }
+      }
+
+      // 2. Intentar con cookie de sesión OAuth
+      const sessionId = req.cookies?.mcp_session;
+
+      if (sessionId) {
+        const sessionToken = getTokenFromSession(sessionId);
+
+        if (sessionToken) {
+          try {
+            const payload = await verifyToken(sessionToken, config);
+            (req as any).user = payload;
+            (req as any).accessToken = sessionToken;
+            console.log(`✅ User authenticated via session cookie: ${payload.email || payload.sub}`);
+            next();
+            return;
+          } catch (error) {
+            console.error('❌ Session token invalid or expired');
+          }
+        }
+      }
+
+      // 3. Si ninguno funcionó, rechazar
+      res.status(401).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32001,
+          message: 'Unauthorized: No valid authentication method found. Please login via /mcp/login or provide a valid Authorization header.',
+        },
+        id: null,
+      });
+    } catch (error: any) {
+      console.error('❌ Authentication error:', error.message);
+      res.status(401).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32001,
+          message: `Unauthorized: ${error.message}`,
+        },
+        id: null,
+      });
+    }
+  };
+}
+
+/**
  * Carga la configuración de IAS desde variables de entorno
  */
 export function loadIASConfig(): IASConfig {

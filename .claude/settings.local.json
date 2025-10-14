@@ -10,7 +10,11 @@
       "Bash(curl:*)",
       "Bash(bash:*)",
       "Bash(npm install:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(test:*)",
+      "Bash(npm run build:deploy:*)",
+      "Bash(npm run:*)",
+      "Bash(npm start)"
     ],
     "deny": [],
     "ask": []

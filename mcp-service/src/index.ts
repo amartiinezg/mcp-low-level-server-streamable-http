@@ -35,8 +35,17 @@ import {
 
 import { randomUUID } from "node:crypto";
 import express, { Request, Response } from "express";
+import cookieParser from "cookie-parser";
 import { CAPClient } from "./cap-integration.js";
-import { loadIASConfig, initializeJWKSClient, authMiddleware } from "./auth/ias-auth.js";
+import { loadIASConfig, initializeJWKSClient, authMiddleware, combinedAuthMiddleware } from "./auth/ias-auth.js";
+import {
+  loadOAuthConfig,
+  handleLogin,
+  handleCallback,
+  handleLogout,
+  requireSession,
+  getTokenFromSession,
+} from "./auth/oauth-flow.js";
 
 /**
  * Tipo para una nota.
@@ -55,10 +64,14 @@ const notes: { [id: string]: Note } = {
 // 🚀 Inicializa la app Express
 const app = express();
 app.use(express.json());
+app.use(cookieParser());
 
 // 🔐 Configuración de autenticación IAS
 const iasConfig = loadIASConfig();
 initializeJWKSClient(iasConfig);
+
+// 🔐 Configuración de OAuth Flow
+const oauthConfig = loadOAuthConfig();
 
 // Mapa de transports por sesión
 const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
@@ -415,6 +428,109 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 /**************** Fin de la configuración del servidor MCP ****************/
 
 /**
+ * 🔐 OAuth 2.0 Authorization Code Flow Endpoints
+ */
+
+// Endpoint de login - Redirige al usuario a IAS
+app.get("/mcp/login", handleLogin(oauthConfig));
+
+// Endpoint de callback - Recibe el code y obtiene el token
+app.get("/mcp/callback", handleCallback(oauthConfig));
+
+// Endpoint de logout - Cierra la sesión
+app.get("/mcp/logout", handleLogout());
+
+// Página de inicio con información de autenticación
+app.get("/", (req: Request, res: Response) => {
+  const sessionId = req.cookies?.mcp_session;
+  const isAuthenticated = !!sessionId;
+
+  res.send(`
+    <html>
+      <head>
+        <title>MCP Service - OAuth 2.0</title>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+          }
+          .status {
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+          }
+          .authenticated {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+          }
+          .not-authenticated {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+          }
+          button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+          }
+          button:hover {
+            background: #0056b3;
+          }
+          .logout-btn {
+            background: #dc3545;
+          }
+          .logout-btn:hover {
+            background: #c82333;
+          }
+        </style>
+      </head>
+      <body>
+        <h1>🔗 MCP Service with OAuth 2.0</h1>
+
+        <div class="status ${isAuthenticated ? 'authenticated' : 'not-authenticated'}">
+          ${isAuthenticated
+            ? '✅ You are authenticated'
+            : '❌ You are not authenticated'
+          }
+        </div>
+
+        <h2>Authentication</h2>
+        ${!isAuthenticated
+          ? '<button onclick="window.location.href=\'/mcp/login\'">🔐 Login with SAP IAS</button>'
+          : '<button class="logout-btn" onclick="window.location.href=\'/mcp/logout\'">🚪 Logout</button>'
+        }
+
+        <h2>Endpoints</h2>
+        <ul>
+          <li><strong>POST /mcp</strong> - MCP endpoint (requires authentication)</li>
+          <li><strong>GET /health</strong> - Health check (public)</li>
+          <li><strong>GET /ready</strong> - Readiness check (public)</li>
+          <li><strong>GET /mcp/login</strong> - OAuth login</li>
+          <li><strong>GET /mcp/callback</strong> - OAuth callback</li>
+          <li><strong>GET /mcp/logout</strong> - Logout</li>
+        </ul>
+
+        <h2>Configuration</h2>
+        <ul>
+          <li>OAuth Enabled: ${oauthConfig.enabled ? '✅ Yes' : '❌ No'}</li>
+          <li>IAS Issuer: ${oauthConfig.issuer || 'Not configured'}</li>
+          <li>Client ID: ${oauthConfig.clientId || 'Not configured'}</li>
+          <li>Redirect URI: ${oauthConfig.redirectUri}</li>
+        </ul>
+      </body>
+    </html>
+  `);
+});
+
+/**
  * 🏥 Health check endpoint para Kubernetes liveness probe
  */
 app.get("/health", (req: Request, res: Response) => {
@@ -439,9 +555,9 @@ app.get("/ready", (req: Request, res: Response) => {
 
 /**
  * Endpoint principal MCP (POST).
- * Protegido con autenticación OAuth si está habilitada
+ * Protegido con autenticación combinada (JWT header o cookie de sesión)
  */
-app.post("/mcp", authMiddleware(iasConfig), async (req, res) => {
+app.post("/mcp", combinedAuthMiddleware(iasConfig, getTokenFromSession), async (req, res) => {
   console.log("📨 Recibida petición MCP POST");
   console.log("📦 Cuerpo de la petición:", req.body);
 
@@ -503,9 +619,9 @@ app.post("/mcp", authMiddleware(iasConfig), async (req, res) => {
 
 /**
  * Endpoint GET para SSE streams (usado por MCP para eventos).
- * Protegido con autenticación OAuth si está habilitada
+ * Protegido con autenticación combinada (JWT header o cookie de sesión)
  */
-app.get("/mcp", authMiddleware(iasConfig), async (req: Request, res: Response) => {
+app.get("/mcp", combinedAuthMiddleware(iasConfig, getTokenFromSession), async (req: Request, res: Response) => {
   console.error("📥 Recibida petición MCP GET");
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   if (!sessionId || !transports[sessionId]) {
@@ -533,9 +649,9 @@ app.get("/mcp", authMiddleware(iasConfig), async (req: Request, res: Response) =
 
 /**
  * Endpoint DELETE para terminar sesión MCP.
- * Protegido con autenticación OAuth si está habilitada
+ * Protegido con autenticación combinada (JWT header o cookie de sesión)
  */
-app.delete("/mcp", authMiddleware(iasConfig), async (req: Request, res: Response) => {
+app.delete("/mcp", combinedAuthMiddleware(iasConfig, getTokenFromSession), async (req: Request, res: Response) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   if (!sessionId || !transports[sessionId]) {
     res.status(400).json({

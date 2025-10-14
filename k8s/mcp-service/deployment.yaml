@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
       - name: mcp-service
-        image: docker.io/amartiinezg/mcp-service:v1.0.1
+        image: docker.io/amartiinezg/mcp-service:v2.1.1-combined-auth
         imagePullPolicy: Always
         ports:
         - containerPort: 3001
@@ -50,6 +50,24 @@ spec:
             secretKeyRef:
               name: ias-credentials
               key: IAS_AUDIENCE
+        # OAuth 2.0 Authorization Code Flow
+        - name: IAS_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: ias-oauth-credentials
+              key: IAS_CLIENT_ID
+        - name: IAS_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ias-oauth-credentials
+              key: IAS_CLIENT_SECRET
+        - name: IAS_REDIRECT_URI
+          valueFrom:
+            secretKeyRef:
+              name: ias-oauth-credentials
+              key: IAS_REDIRECT_URI
+        - name: IAS_SCOPES
+          value: "openid email profile"
         resources:
           requests:
             memory: "256Mi"
