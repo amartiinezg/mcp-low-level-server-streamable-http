@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
       - name: mcp-service
-        image: docker.io/amartiinezg/mcp-service:v2.1.1-combined-auth
+        image: docker.io/amartiinezg/mcp-service:v1.0.0
         imagePullPolicy: Always
         ports:
         - containerPort: 3001
@@ -67,7 +67,9 @@ spec:
               name: ias-oauth-credentials
               key: IAS_REDIRECT_URI
         - name: IAS_SCOPES
-          value: "openid email profile"
+          value: "openid email profile offline_access"
+        - name: PUBLIC_URL
+          value: "https://mcp-service.c-7c1fc59.kyma.ondemand.com"
         resources:
           requests:
             memory: "256Mi"

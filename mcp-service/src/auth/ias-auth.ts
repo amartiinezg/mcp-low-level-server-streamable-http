@@ -191,6 +191,7 @@ export function authMiddleware(config: IASConfig) {
 /**
  * Middleware de autenticación combinado (acepta JWT o cookie de sesión)
  * Intenta primero con Authorization header, si falla intenta con cookie de sesión
+ * Implementa RFC 9728 (Protected Resource Metadata) retornando WWW-Authenticate header
  */
 export function combinedAuthMiddleware(config: IASConfig, getTokenFromSession: (sessionId: string) => string | null) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -237,7 +238,11 @@ export function combinedAuthMiddleware(config: IASConfig, getTokenFromSession: (
         }
       }
 
-      // 3. Si ninguno funcionó, rechazar
+      // 3. Si ninguno funcionó, rechazar con WWW-Authenticate header (RFC 9728)
+      const baseUrl = process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
+      const resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
+
+      res.setHeader('WWW-Authenticate', `Bearer realm="MCP Server", resource_metadata="${resourceMetadataUrl}"`);
       res.status(401).json({
         jsonrpc: '2.0',
         error: {
@@ -248,6 +253,10 @@ export function combinedAuthMiddleware(config: IASConfig, getTokenFromSession: (
       });
     } catch (error: any) {
       console.error('❌ Authentication error:', error.message);
+      const baseUrl = process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
+      const resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
+
+      res.setHeader('WWW-Authenticate', `Bearer realm="MCP Server", resource_metadata="${resourceMetadataUrl}", error="invalid_token"`);
       res.status(401).json({
         jsonrpc: '2.0',
         error: {

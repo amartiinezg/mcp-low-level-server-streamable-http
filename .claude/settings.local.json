@@ -14,7 +14,16 @@
       "Bash(test:*)",
       "Bash(npm run build:deploy:*)",
       "Bash(npm run:*)",
-      "Bash(npm start)"
+      "Bash(npm start)",
+      "WebSearch",
+      "Bash(where gemini-cli)",
+      "WebFetch(domain:google-gemini.github.io)",
+      "WebFetch(domain:geminicli.com)",
+      "Bash(export KUBECONFIG=\".kubeconfig.yaml\")",
+      "Read(//c/Users/amartinez/projects/MCP Project/**)",
+      "Bash(timeout 60 kubectl --kubeconfig=\".kubeconfig.yaml\" wait --for=condition=ready pod -l app=mcp-service -n mcp-cap-integration --timeout=60s)",
+      "Bash(timeout 60 kubectl wait --for=condition=ready pod -l app=mcp-service -n mcp-cap-integration --timeout=60s)",
+      "Bash(timeout 60 kubectl wait --for=condition=ready pod -l app=cap-service -n mcp-cap-integration --timeout=60s)"
     ],
     "deny": [],
     "ask": []

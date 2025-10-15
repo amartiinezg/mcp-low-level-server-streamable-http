@@ -6,6 +6,7 @@ Implementación de un servidor MCP (Model Context Protocol) usando la Low-Level 
 
 - **MCP Server** - Low-Level API con Streamable HTTP transport
 - **OAuth 2.0 Authentication** - Autenticación JWT con SAP Identity Authentication Service (IAS)
+- **OAuth Discovery** - Soporte completo para RFC 8414 y RFC 9728
 - **CAP Integration** - Servicio OData para gestión de catálogo e-commerce
 - **Session Management** - Gestión de sesiones HTTP con headers
 - **3 MCP Tools** - Herramientas para interactuar con CAP OData
@@ -100,6 +101,56 @@ Los servicios estarán disponibles en:
 
 Este proyecto soporta autenticación OAuth 2.0 usando SAP Identity Authentication Service (IAS). La autenticación es **opcional** y se controla mediante variables de entorno.
 
+### OAuth Discovery y Compatibilidad con SAP IAS
+
+El servidor implementa **OAuth Discovery** con compatibilidad especial para SAP IAS:
+
+**✅ RFC 8414 - Authorization Server Metadata**
+- Endpoint: `GET /.well-known/oauth-authorization-server`
+- Permite a clientes MCP descubrir automáticamente la configuración OAuth
+- Retorna endpoints de autorización, token y JWKS
+
+**⚠️ RFC 9728 - Protected Resource Metadata (DESHABILITADO)**
+- El endpoint `/.well-known/oauth-protected-resource` está **intencionalmente deshabilitado**
+- **Razón:** SAP IAS no soporta el parámetro `resource` de RFC 8707
+- Cuando los clientes MCP detectan RFC 9728, automáticamente agregan el parámetro `resource` causando error `invalid_target`
+
+**🔄 OAuth Proxy Endpoints**
+- `GET /oauth/authorize` - Filtra el parámetro `resource` antes de redirigir a SAP IAS
+- `POST /oauth/token` - Filtra el parámetro `resource` antes de reenviar a SAP IAS
+- Estos endpoints actúan como proxy para garantizar compatibilidad con SAP IAS
+
+**Clientes MCP compatibles** (Gemini CLI, etc.) pueden conectarse con dynamic discovery:
+```json
+{
+  "mcpServers": {
+    "mcp-cap-service": {
+      "url": "https://mcp-service.c-7c1fc59.kyma.ondemand.com/mcp",
+      "oauth": {
+        "enabled": true,
+        "clientId": "YOUR_CLIENT_ID_HERE",
+        "clientSecret": "YOUR_CLIENT_SECRET_HERE",
+        "scopes": ["openid", "email", "profile"],
+        "authProviderType": "dynamic_discovery"
+      }
+    }
+  }
+}
+```
+
+**Importante:** Este servidor NO soporta dynamic client registration. Debes:
+1. Obtener un `client_id` y `client_secret` pre-configurado en SAP IAS
+2. Configurar el `redirect_uri` en IAS según tu cliente MCP:
+   - Gemini CLI: `http://localhost:7777/oauth/callback`
+   - Navegador web: `https://mcp-service.c-7c1fc59.kyma.ondemand.com/mcp/callback`
+3. Agregar `client_id` y `client_secret` a la configuración del cliente MCP
+
+El cliente automáticamente:
+1. Detecta que requiere OAuth al recibir 401 con `WWW-Authenticate` header
+2. Realiza `GET /.well-known/oauth-authorization-server` para descubrir configuración
+3. Inicia el flujo OAuth 2.0 Authorization Code con PKCE
+4. Obtiene access token y lo incluye en futuras peticiones
+
 ### Sin Autenticación (Development)
 
 ```bash
@@ -130,7 +181,7 @@ export IAS_AUDIENCE=your-client-id
 npm start
 ```
 
-📚 **Guía Completa:** Ver [docs/IAS_SETUP.md](docs/IAS_SETUP.md) para configuración paso a paso.
+📚 **Guía Completa:** Ver [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md) para configuración paso a paso.
 
 ## 🛠️ MCP Tools
 
@@ -177,6 +228,12 @@ Actualiza el estado de una orden
 | `/mcp` | DELETE | Requerida* | Terminar sesión |
 | `/health` | GET | Pública | Health check |
 | `/ready` | GET | Pública | Readiness probe |
+| `/.well-known/oauth-authorization-server` | GET | Pública | OAuth Server Metadata (RFC 8414) |
+| `/oauth/authorize` | GET | Pública | OAuth proxy - filtra parámetro `resource` |
+| `/oauth/token` | POST | Pública | OAuth token proxy - filtra parámetro `resource` |
+| `/mcp/login` | GET | Pública | Iniciar flujo OAuth 2.0 |
+| `/mcp/callback` | GET | Pública | Callback OAuth 2.0 |
+| `/mcp/logout` | GET | Pública | Cerrar sesión OAuth |
 
 \* Solo si `IAS_ENABLED=true`
 
@@ -340,11 +397,9 @@ npm run inspector
 
 ## 📚 Documentación
 
-- **[QUICK_START.md](QUICK_START.md)** - 🚀 Guía rápida en 5 minutos (¡Empieza aquí!)
 - **[CLAUDE.md](CLAUDE.md)** - Guía para Claude Code
-- **[docs/IAS_SETUP.md](docs/IAS_SETUP.md)** - Configuración OAuth 2.0 completa
-- **[OAUTH_IMPLEMENTATION_SUMMARY.md](OAUTH_IMPLEMENTATION_SUMMARY.md)** - Resumen de implementación OAuth
-- **[mcp-service/README.md](mcp-service/README.md)** - Documentación del MCP Service
+- **[docs/DOCUMENTATION.md](docs/DOCUMENTATION.md)** - Documentación completa (OAuth 2.0, IAS Setup, Gemini CLI, etc.)
+- **[DEPLOYMENT-KYMA.md](DEPLOYMENT-KYMA.md)** - Guía de deployment en KYMA
 
 ## 🏗️ Arquitectura
 
@@ -419,7 +474,7 @@ echo $TOKEN | cut -d'.' -f2 | base64 -d | jq .
 kubectl exec -it deployment/cap-service -n mcp-cap-integration -- ls /app/data
 ```
 
-Ver más en [docs/IAS_SETUP.md](docs/IAS_SETUP.md#troubleshooting)
+Ver más en [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md#troubleshooting)
 
 ## 🤝 Contribuir
 
@@ -441,5 +496,5 @@ Este proyecto es un demo educativo para mostrar integración de MCP con CAP y OA
 
 ---
 
-**Versión:** 2.0.0-oauth
-**Última Actualización:** 2025-10-09
+**Versión:** 1.0.0
+**Última Actualización:** 2025-10-15

@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
       - name: cap-service
-        image: docker.io/amartiinezg/cap-service:v2.0.1-oauth
+        image: docker.io/amartiinezg/cap-service:v1.0.0
         imagePullPolicy: Always
         ports:
         - containerPort: 4004

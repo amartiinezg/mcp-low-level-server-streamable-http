@@ -7,10 +7,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 MCP (Model Context Protocol) server integrated with SAP CAP (Cloud Application Programming Model) demonstrating:
 - MCP server with Low-Level API and Streamable HTTP transport
 - OAuth 2.0 authentication with SAP Identity Authentication Service (IAS)
+- **OAuth Discovery** - RFC 8414 (Authorization Server Metadata) with custom proxy endpoints
+- **OAuth Proxy Endpoints** - Filters RFC 8707 `resource` parameter for SAP IAS compatibility
 - CAP OData service for e-commerce catalog management
-- 3 MCP tools to interact with CAP OData endpoints
+- 4 MCP tools to interact with CAP OData endpoints
 - Note-taking system (original MCP demo)
 - JWT token validation using JWKS (JSON Web Key Set)
+- Combined authentication (JWT Bearer token + OAuth session cookies)
 
 ## Development Commands
 
@@ -56,7 +59,7 @@ OAuth 2.0 authentication using SAP IAS:
 
 **Authentication is optional** - controlled by `IAS_ENABLED` environment variable.
 
-See [docs/IAS_SETUP.md](docs/IAS_SETUP.md) for complete OAuth 2.0 setup guide.
+See [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md) for complete OAuth 2.0 setup guide.
 
 ### CAP Integration (mcp-service/src/cap-integration.ts)
 
@@ -104,6 +107,14 @@ Uses `StreamableHTTPServerTransport` from MCP SDK for HTTP-based sessions:
 - **DELETE /mcp**: Session termination **(requires authentication if enabled)**
 - **GET /health**: Kubernetes liveness probe (public, no authentication required)
 - **GET /ready**: Kubernetes readiness probe (public, no authentication required)
+- **GET /.well-known/oauth-authorization-server**: OAuth Server Metadata (RFC 8414) for discovery
+- **GET /oauth/authorize**: OAuth proxy endpoint - filters `resource` parameter before forwarding to SAP IAS
+- **POST /oauth/token**: OAuth token proxy endpoint - filters `resource` parameter before forwarding to SAP IAS
+- **GET /mcp/login**: OAuth 2.0 Authorization Code Flow - login initiation
+- **GET /mcp/callback**: OAuth 2.0 callback handler
+- **GET /mcp/logout**: OAuth 2.0 logout
+
+**Important:** The `/.well-known/oauth-protected-resource` endpoint (RFC 9728) is **intentionally disabled** because SAP IAS does not support the RFC 8707 `resource` parameter. When enabled, MCP clients automatically add this parameter causing `invalid_target` errors.
 
 **Session lifecycle:**
 1. Client sends `initialize` request without session ID to POST /mcp
@@ -148,18 +159,71 @@ Configuration in `k8s/03-deployment.yaml`:
 
 ## MCP Client Configuration
 
-**Claude Desktop config:**
+### Claude Desktop
 
-macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-Windows: `%APPDATA%/Claude/claude_desktop_config.json`
+**Config location:**
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%/Claude/claude_desktop_config.json`
 
+**Local (without authentication):**
 ```json
 {
   "mcpServers": {
-    "mcp-low-level-server-streamable-http": {
+    "mcp-cap-integration": {
       "type": "http",
       "url": "http://localhost:3001/mcp"
     }
   }
 }
+```
+
+**Production (with OAuth):**
+```json
+{
+  "mcpServers": {
+    "mcp-cap-integration": {
+      "type": "http",
+      "url": "https://mcp-service.c-7c1fc59.kyma.ondemand.com/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_ACCESS_TOKEN"
+      }
+    }
+  }
+}
+```
+
+### Gemini CLI
+
+**Config location:**
+- Windows: `%USERPROFILE%\.gemini\settings.json`
+- macOS/Linux: `~/.gemini/settings.json`
+
+**With OAuth Discovery (recommended):**
+```json
+{
+  "mcpServers": {
+    "mcp-cap-service": {
+      "url": "https://mcp-service.c-7c1fc59.kyma.ondemand.com/mcp",
+      "oauth": {
+        "enabled": true,
+        "clientId": "your-client-id",
+        "clientSecret": "your-client-secret",
+        "scopes": ["openid", "email", "profile"],
+        "authProviderType": "dynamic_discovery"
+      }
+    }
+  }
+}
+```
+
+**Authentication:**
+```bash
+# Authenticate with OAuth
+/mcp auth mcp-cap-service
+
+# List available servers
+/mcp list
+
+# Test tools
+/mcp tools mcp-cap-service
 ```

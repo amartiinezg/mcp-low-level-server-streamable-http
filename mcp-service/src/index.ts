@@ -64,6 +64,7 @@ const notes: { [id: string]: Note } = {
 // 🚀 Inicializa la app Express
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // Para OAuth token requests
 app.use(cookieParser());
 
 // 🔐 Configuración de autenticación IAS
@@ -552,6 +553,143 @@ app.get("/ready", (req: Request, res: Response) => {
     timestamp: new Date().toISOString()
   });
 });
+
+/**
+ * 🔄 OAuth 2.0 Proxy Endpoints (para filtrar parámetro "resource")
+ *
+ * Gemini CLI y otros clientes MCP envían el parámetro "resource" (RFC 8707)
+ * que SAP IAS no soporta. Estos endpoints actúan como proxy, filtrando
+ * el parámetro "resource" antes de redirigir a SAP IAS.
+ */
+
+// Proxy para authorization endpoint - Filtra "resource" parameter
+app.get("/oauth/authorize", (req: Request, res: Response) => {
+  if (!oauthConfig.enabled) {
+    res.status(404).send("OAuth is not enabled on this server");
+    return;
+  }
+
+  // Clonar query params y eliminar "resource"
+  const params = new URLSearchParams(req.query as any);
+  params.delete('resource'); // ← Esto elimina el parámetro problemático
+
+  // Redirigir a SAP IAS sin el parámetro "resource"
+  const iasUrl = `${oauthConfig.issuer}/oauth2/authorize?${params.toString()}`;
+  console.log(`🔄 Proxy OAuth: Redirigiendo a IAS (sin resource): ${iasUrl}`);
+  res.redirect(iasUrl);
+});
+
+// Proxy para token endpoint - Filtra "resource" parameter
+app.post("/oauth/token", async (req: Request, res: Response) => {
+  if (!oauthConfig.enabled) {
+    res.status(404).json({ error: "OAuth is not enabled on this server" });
+    return;
+  }
+
+  try {
+    // Clonar body y eliminar "resource"
+    const body = { ...req.body };
+    delete body.resource; // ← Esto elimina el parámetro problemático
+
+    console.log(`🔄 Proxy OAuth: Reenviando token request a IAS (sin resource)`);
+
+    // Reenviar la petición a SAP IAS
+    const axios = await import('axios');
+    const response = await axios.default.post(
+      `${oauthConfig.issuer}/oauth2/token`,
+      new URLSearchParams(body).toString(),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      }
+    );
+
+    // Retornar la respuesta de IAS tal cual
+    res.status(response.status).json(response.data);
+  } catch (error: any) {
+    console.error('❌ Error en proxy OAuth token:', error.response?.data || error.message);
+    if (error.response) {
+      res.status(error.response.status).json(error.response.data);
+    } else {
+      res.status(500).json({ error: 'Internal proxy error' });
+    }
+  }
+});
+
+/**
+ * 🔍 OAuth 2.0 Authorization Server Metadata (RFC 8414)
+ * Endpoint de discovery para que clientes MCP descubran automáticamente la configuración OAuth
+ *
+ * IMPORTANTE: Apunta a nuestros endpoints PROXY en lugar de directamente a SAP IAS
+ */
+app.get("/.well-known/oauth-authorization-server", (req: Request, res: Response) => {
+  if (!oauthConfig.enabled) {
+    res.status(404).json({
+      error: "OAuth is not enabled on this server",
+      message: "Set IAS_ENABLED=true to enable OAuth 2.0 authentication"
+    });
+    return;
+  }
+
+  const baseUrl = process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
+
+  // OAuth 2.0 Authorization Server Metadata (RFC 8414)
+  // Note: registration_endpoint is intentionally omitted because SAP IAS
+  // requires authenticated registration (not public), which Gemini CLI doesn't support.
+  // Users must pre-configure client_id and client_secret in their MCP client config.
+  //
+  // IMPORTANTE: authorization_endpoint y token_endpoint apuntan a nuestros endpoints PROXY
+  // que filtran el parámetro "resource" antes de redirigir a SAP IAS
+  res.status(200).json({
+    issuer: oauthConfig.issuer,
+    authorization_endpoint: `${baseUrl}/oauth/authorize`,  // ← PROXY endpoint
+    token_endpoint: `${baseUrl}/oauth/token`,              // ← PROXY endpoint
+    jwks_uri: `${oauthConfig.issuer}/oauth2/certs`,       // ← Directo a IAS (no necesita proxy)
+    scopes_supported: oauthConfig.scopes,
+    response_types_supported: ["code"],
+    response_modes_supported: ["query", "fragment"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
+    token_endpoint_auth_methods_supported: [
+      "client_secret_basic",
+      "client_secret_post"
+    ],
+    code_challenge_methods_supported: ["S256"],
+    service_documentation: `${baseUrl}/`,
+    ui_locales_supported: ["en-US", "es-ES"]
+  });
+});
+
+/**
+ * 🔍 OAuth 2.0 Protected Resource Metadata (RFC 9728) - DISABLED
+ *
+ * IMPORTANTE: Este endpoint está deshabilitado porque SAP IAS no soporta
+ * el parámetro "resource" de RFC 8707. Cuando Gemini CLI detecta este endpoint,
+ * automáticamente agrega el parámetro "resource" a la autorización OAuth,
+ * causando el error "invalid_target".
+ *
+ * Solución: No exponer este endpoint para que Gemini CLI no intente usar
+ * RFC 9728 protected resource metadata.
+ */
+// app.get("/.well-known/oauth-protected-resource", (req: Request, res: Response) => {
+//   if (!oauthConfig.enabled) {
+//     res.status(404).json({
+//       error: "OAuth is not enabled on this server"
+//     });
+//     return;
+//   }
+
+//   const baseUrl = process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
+
+//   res.status(200).json({
+//     // resource: baseUrl, // REMOVED: SAP IAS doesn't support RFC 8707 resource parameter
+//     authorization_servers: [oauthConfig.issuer],
+//     scopes_supported: oauthConfig.scopes,
+//     bearer_methods_supported: ["header"],
+//     resource_documentation: `${baseUrl}/`,
+//     resource_signing_alg_values_supported: ["RS256"]
+//   });
+// });
 
 /**
  * Endpoint principal MCP (POST).
