@@ -37,7 +37,7 @@ import { randomUUID } from "node:crypto";
 import express, { Request, Response } from "express";
 import cookieParser from "cookie-parser";
 import { CAPClient } from "./cap-integration.js";
-import { loadIASConfig, initializeJWKSClient, authMiddleware, combinedAuthMiddleware } from "./auth/ias-auth.js";
+import { loadIASConfig, initializeJWKSClient, authMiddleware, combinedAuthMiddleware, extractToken } from "./auth/ias-auth.js";
 import {
   loadOAuthConfig,
   handleLogin,
@@ -76,6 +76,9 @@ const oauthConfig = loadOAuthConfig();
 
 // Mapa de transports por sesión
 const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
+
+// Mapa de tokens por sesión (para pasar el token al CAP service)
+const sessionTokens: { [sessionId: string]: string } = {};
 
 // 🔗 Cliente CAP para interactuar con OData
 const CAP_URL = process.env.CAP_SERVICE_URL || "http://localhost:4004";
@@ -232,9 +235,35 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 
 /**
+ * Helper para obtener el token de autenticación de la sesión actual
+ */
+function getCurrentSessionToken(): string | undefined {
+  // Buscar el token en las sesiones activas
+  // Nota: Esto funciona porque cada request MCP tiene una sesión asociada
+  const sessionIds = Object.keys(sessionTokens);
+  if (sessionIds.length > 0) {
+    // Retornar el token de la última sesión activa
+    return sessionTokens[sessionIds[sessionIds.length - 1]];
+  }
+  return undefined;
+}
+
+/**
  * 📝 Handler para las herramientas (tools).
  */
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+  // Obtener el token de autenticación de la sesión
+  const authToken = getCurrentSessionToken();
+
+  // Si hay token, actualizar el CAPClient con el token
+  if (authToken) {
+    console.log(`[CallTool] Usando token de autenticación para llamada a CAP service`);
+    capClient.setAuthToken(authToken);
+  } else {
+    console.log(`[CallTool] No hay token de autenticación disponible`);
+    capClient.clearAuthToken();
+  }
+
   switch (request.params.name) {
     case "create_note": {
       const title = String(request.params.arguments?.title);
@@ -704,23 +733,39 @@ app.post("/mcp", combinedAuthMiddleware(iasConfig, getTokenFromSession), async (
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     console.log(`🔑 Procesando para session ID: ${sessionId}`);
 
+    // Extraer token de autenticación del request (puede venir del header Authorization o de la sesión OAuth)
+    const authToken = (req as any).accessToken || extractToken(req);
+
     let transport: StreamableHTTPServerTransport;
 
     if (sessionId && transports[sessionId]) {
       console.log(`🔄 Reutilizando transport para sesión ${sessionId}`);
       transport = transports[sessionId];
+
+      // Actualizar el token de la sesión
+      if (authToken) {
+        sessionTokens[sessionId] = authToken;
+        console.log(`🔐 Token de autenticación actualizado para sesión ${sessionId}`);
+      }
     } else if (!sessionId && isInitializeRequest(req.body)) {
       console.log("🆕 Sin session ID, inicializando nuevo transport");
 
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
-        onsessioninitialized: (sessionId) => {
-          transports[sessionId] = transport;
+        onsessioninitialized: (newSessionId) => {
+          transports[newSessionId] = transport;
+
+          // Guardar el token para esta sesión
+          if (authToken) {
+            sessionTokens[newSessionId] = authToken;
+            console.log(`🔐 Token de autenticación guardado para nueva sesión ${newSessionId}`);
+          }
         },
       });
       transport.onclose = () => {
         if (transport.sessionId) {
           delete transports[transport.sessionId];
+          delete sessionTokens[transport.sessionId]; // Limpiar token al cerrar sesión
         }
       };
 

@@ -13,16 +13,45 @@ import axios, { AxiosInstance } from 'axios';
 export class CAPClient {
   private client: AxiosInstance;
   private baseUrl: string;
+  private authToken?: string;
 
-  constructor(baseUrl: string = 'http://localhost:4004') {
+  constructor(baseUrl: string = 'http://localhost:4004', authToken?: string) {
     this.baseUrl = baseUrl;
+    this.authToken = authToken;
+
+    const headers: any = {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    };
+
+    // Si hay token de autenticación, agregarlo al header
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+      console.log(`[CAPClient] Inicializado con token de autenticación`);
+    }
+
     this.client = axios.create({
       baseURL: `${baseUrl}/odata/v4/catalog`,
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      }
+      headers
     });
+  }
+
+  /**
+   * Actualiza el token de autenticación para futuras peticiones
+   */
+  setAuthToken(token: string) {
+    this.authToken = token;
+    this.client.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    console.log(`[CAPClient] Token de autenticación actualizado`);
+  }
+
+  /**
+   * Elimina el token de autenticación
+   */
+  clearAuthToken() {
+    this.authToken = undefined;
+    delete this.client.defaults.headers.common['Authorization'];
+    console.log(`[CAPClient] Token de autenticación eliminado`);
   }
 
   /**
