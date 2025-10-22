@@ -183,7 +183,7 @@ Configuration in `k8s/03-deployment.yaml`:
   "mcpServers": {
     "mcp-cap-integration": {
       "type": "http",
-      "url": "https://mcp-service.c-7c1fc59.kyma.ondemand.com/mcp",
+      "url": "https://mcp-service.a7dda9c.kyma.ondemand.com/mcp",
       "headers": {
         "Authorization": "Bearer YOUR_ACCESS_TOKEN"
       }
@@ -203,7 +203,7 @@ Configuration in `k8s/03-deployment.yaml`:
 {
   "mcpServers": {
     "mcp-cap-service": {
-      "url": "https://mcp-service.c-7c1fc59.kyma.ondemand.com/mcp",
+      "url": "https://mcp-service.a7dda9c.kyma.ondemand.com/mcp",
       "oauth": {
         "enabled": true,
         "clientId": "your-client-id",

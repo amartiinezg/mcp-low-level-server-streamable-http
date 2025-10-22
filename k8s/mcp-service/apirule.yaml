@@ -1,4 +1,4 @@
-apiVersion: gateway.kyma-project.io/v1beta1
+apiVersion: gateway.kyma-project.io/v2
 kind: APIRule
 metadata:
   name: mcp-service-api
@@ -6,14 +6,13 @@ metadata:
   labels:
     app: mcp-service
 spec:
-  gateway: kyma-gateway.kyma-system.svc.cluster.local
-  host: mcp-service
+  gateway: kyma-system/kyma-gateway
+  hosts:
+    - mcp-service.a7dda9c.kyma.ondemand.com
   service:
     name: mcp-service
     port: 3001
   rules:
-    - path: /.*
+    - path: /*
       methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
-      accessStrategies:
-        - handler: noop
-      mutators: []
+      noAuth: true

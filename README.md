@@ -125,7 +125,7 @@ El servidor implementa **OAuth Discovery** con compatibilidad especial para SAP 
 {
   "mcpServers": {
     "mcp-cap-service": {
-      "url": "https://mcp-service.c-7c1fc59.kyma.ondemand.com/mcp",
+      "url": "https://mcp-service.a7dda9c.kyma.ondemand.com/mcp",
       "oauth": {
         "enabled": true,
         "clientId": "YOUR_CLIENT_ID_HERE",
@@ -142,7 +142,7 @@ El servidor implementa **OAuth Discovery** con compatibilidad especial para SAP 
 1. Obtener un `client_id` y `client_secret` pre-configurado en SAP IAS
 2. Configurar el `redirect_uri` en IAS según tu cliente MCP:
    - Gemini CLI: `http://localhost:7777/oauth/callback`
-   - Navegador web: `https://mcp-service.c-7c1fc59.kyma.ondemand.com/mcp/callback`
+   - Navegador web: `https://mcp-service.a7dda9c.kyma.ondemand.com/mcp/callback`
 3. Agregar `client_id` y `client_secret` a la configuración del cliente MCP
 
 El cliente automáticamente:
@@ -386,7 +386,7 @@ npm run inspector
   "mcpServers": {
     "mcp-cap-integration": {
       "type": "http",
-      "url": "https://mcp-service.c-<cluster-id>.kyma.ondemand.com/mcp",
+      "url": "https://mcp-service.a7dda9c.kyma.ondemand.com/mcp",
       "headers": {
         "Authorization": "Bearer <your-access-token>"
       }

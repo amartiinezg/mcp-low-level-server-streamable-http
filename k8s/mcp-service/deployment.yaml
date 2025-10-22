@@ -54,22 +54,22 @@ spec:
         - name: IAS_CLIENT_ID
           valueFrom:
             secretKeyRef:
-              name: ias-oauth-credentials
+              name: ias-credentials
               key: IAS_CLIENT_ID
         - name: IAS_CLIENT_SECRET
           valueFrom:
             secretKeyRef:
-              name: ias-oauth-credentials
+              name: ias-credentials
               key: IAS_CLIENT_SECRET
         - name: IAS_REDIRECT_URI
           valueFrom:
             secretKeyRef:
-              name: ias-oauth-credentials
+              name: ias-credentials
               key: IAS_REDIRECT_URI
         - name: IAS_SCOPES
           value: "openid email profile offline_access"
         - name: PUBLIC_URL
-          value: "https://mcp-service.c-7c1fc59.kyma.ondemand.com"
+          value: "https://mcp-service.a7dda9c.kyma.ondemand.com"
         resources:
           requests:
             memory: "256Mi"
