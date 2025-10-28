@@ -69,7 +69,7 @@ spec:
         - name: IAS_SCOPES
           value: "openid email profile offline_access"
         - name: PUBLIC_URL
-          value: "https://mcp-service.a7dda9c.kyma.ondemand.com"
+          value: "https://mcp-service.c-42fe4ef.kyma.ondemand.com"
         resources:
           requests:
             memory: "256Mi"
