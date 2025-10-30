@@ -1,0 +1,8 @@
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceInstance
+metadata:
+  name: destination-service
+  namespace: mcp-cap-integration
+spec:
+  serviceOfferingName: destination
+  servicePlanName: lite

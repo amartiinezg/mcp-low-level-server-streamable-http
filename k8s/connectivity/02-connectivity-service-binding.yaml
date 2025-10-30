@@ -1,0 +1,8 @@
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceBinding
+metadata:
+  name: connectivity-service-binding
+  namespace: mcp-cap-integration
+spec:
+  serviceInstanceName: connectivity-service
+  secretName: connectivity-service-credentials

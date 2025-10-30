@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: connectivity-proxy
+  namespace: mcp-cap-integration
+  labels:
+    app: connectivity-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: connectivity-proxy
+  template:
+    metadata:
+      annotations:
+        sidecar.istio.io/inject: "false"
+      labels:
+        app: connectivity-proxy
+    spec:
+      containers:
+      - name: connectivity-proxy
+        image: docker.io/sapse/connectivity-proxy:2.18.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 20003
+          name: http
+          protocol: TCP
+        env:
+        - name: tenantmode
+          value: "dedicated"
+        - name: subaccountid
+          valueFrom:
+            secretKeyRef:
+              name: connectivity-service-credentials
+              key: subaccount_id
+        - name: subaccountsubdomain
+          valueFrom:
+            secretKeyRef:
+              name: connectivity-service-credentials
+              key: subaccount_subdomain
+        - name: clientid
+          valueFrom:
+            secretKeyRef:
+              name: connectivity-service-credentials
+              key: clientid
+        - name: clientsecret
+          valueFrom:
+            secretKeyRef:
+              name: connectivity-service-credentials
+              key: clientsecret
+        - name: tokenserviceurl
+          valueFrom:
+            secretKeyRef:
+              name: connectivity-service-credentials
+              key: token_service_url
+        - name: connectivityserviceurl
+          valueFrom:
+            secretKeyRef:
+              name: connectivity-service-credentials
+              key: connectivity_service
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 20003
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 20003
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          failureThreshold: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: connectivity-proxy
+  namespace: mcp-cap-integration
+  labels:
+    app: connectivity-proxy
+spec:
+  selector:
+    app: connectivity-proxy
+  ports:
+  - port: 20003
+    targetPort: 20003
+    protocol: TCP
+    name: http
+  type: ClusterIP
