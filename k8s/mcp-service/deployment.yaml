@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
       - name: mcp-service
-        image: docker.io/amartiinezg/mcp-service:v1.0.0
+        image: docker.io/amartiinezg/mcp-service:v1.0.6-connectivity
         imagePullPolicy: Always
         ports:
         - containerPort: 3001
@@ -69,7 +69,54 @@ spec:
         - name: IAS_SCOPES
           value: "openid email profile offline_access"
         - name: PUBLIC_URL
-          value: "https://mcp-service.a7dda9c.kyma.ondemand.com"
+          value: "https://mcp-service.c-42fe4ef.kyma.ondemand.com"
+        # BTP Destination Service configuration (from ServiceBinding)
+        - name: BTP_DESTINATION_SERVICE_URL
+          valueFrom:
+            secretKeyRef:
+              name: destination-service-credentials
+              key: uri
+        - name: BTP_DESTINATION_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: destination-service-credentials
+              key: clientid
+        - name: BTP_DESTINATION_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: destination-service-credentials
+              key: clientsecret
+        - name: BTP_DESTINATION_TOKEN_URL
+          valueFrom:
+            secretKeyRef:
+              name: destination-service-credentials
+              key: url
+        - name: BTP_DESTINATION_NAME
+          value: "SAP_OnPremise"
+        # Connectivity Service configuration (from ServiceBinding)
+        - name: CONNECTIVITY_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: connectivity-service-credentials
+              key: clientid
+        - name: CONNECTIVITY_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: connectivity-service-credentials
+              key: clientsecret
+        - name: CONNECTIVITY_TOKEN_URL
+          valueFrom:
+            secretKeyRef:
+              name: connectivity-service-credentials
+              key: token_service_url
+        - name: CONNECTIVITY_SERVICE_URL
+          valueFrom:
+            secretKeyRef:
+              name: connectivity-service-credentials
+              key: connectivity_service
+        # Connectivity Proxy URL (in kyma-system)
+        - name: CONNECTIVITY_PROXY_URL
+          value: "http://connectivity-proxy.kyma-system.svc.cluster.local:20003"
         resources:
           requests:
             memory: "256Mi"

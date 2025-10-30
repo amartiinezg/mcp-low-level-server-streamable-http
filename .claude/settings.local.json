@@ -23,7 +23,13 @@
       "Read(//c/Users/amartinez/projects/MCP Project/**)",
       "Bash(timeout 60 kubectl --kubeconfig=\".kubeconfig.yaml\" wait --for=condition=ready pod -l app=mcp-service -n mcp-cap-integration --timeout=60s)",
       "Bash(timeout 60 kubectl wait --for=condition=ready pod -l app=mcp-service -n mcp-cap-integration --timeout=60s)",
-      "Bash(timeout 60 kubectl wait --for=condition=ready pod -l app=cap-service -n mcp-cap-integration --timeout=60s)"
+      "Bash(timeout 60 kubectl wait --for=condition=ready pod -l app=cap-service -n mcp-cap-integration --timeout=60s)",
+      "Bash(awk:*)",
+      "WebFetch(domain:help.sap.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:hub.docker.com)",
+      "Bash(mv:*)",
+      "Bash(npm uninstall:*)"
     ],
     "deny": [],
     "ask": []

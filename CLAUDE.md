@@ -11,6 +11,8 @@ MCP (Model Context Protocol) server integrated with SAP CAP (Cloud Application P
 - **OAuth Proxy Endpoints** - Filters RFC 8707 `resource` parameter for SAP IAS compatibility
 - CAP OData service for e-commerce catalog management
 - 4 MCP tools to interact with CAP OData endpoints
+- **SAP OnPremise Integration** - Business Partner API via BTP Destination Service and Cloud Connector
+- 2 MCP tools for Business Partner operations (get, search)
 - Note-taking system (original MCP demo)
 - JWT token validation using JWKS (JSON Web Key Set)
 - Combined authentication (JWT Bearer token + OAuth session cookies)
@@ -39,11 +41,13 @@ The server implements three MCP capability types:
 - `ListResourcesRequestSchema`: Returns all notes as MCP resources
 - `ReadResourceRequestSchema`: Returns specific note content by ID
 
-**Tools** - Actions invokable by MCP clients (4 total)
+**Tools** - Actions invokable by MCP clients (6 total)
 - `create_note`: Creates notes with title and content (original demo)
 - `cap_list_products`: Lists all products from CAP OData, optionally filtered by low stock
 - `cap_create_order`: Creates purchase order with products and quantities
 - `cap_update_order_status`: Updates order status (PENDING/PROCESSING/SHIPPED/DELIVERED/CANCELLED)
+- `sap_get_business_partner`: Get Business Partner by ID from SAP OnPremise via Cloud Connector
+- `sap_search_business_partners`: Search Business Partners by name from SAP OnPremise
 
 **Prompts** - Templates for LLM interactions
 - `summarize_notes`: Returns prompt with embedded note resources
@@ -97,6 +101,46 @@ OAuth 2.0 authentication for CAP OData endpoints:
 - `auth-middleware.js`: JWT validation middleware for Express
 - Applies authentication to `/odata/v4/catalog` routes when enabled
 - Uses same JWKS validation as MCP service for consistency
+
+### SAP OnPremise Integration (mcp-service/src/sap-onpremise/)
+
+Integration with SAP OnPremise systems via BTP Destination Service and Cloud Connector:
+
+**Architecture Flow:**
+```
+MCP Server → BTP Destination Service → Connectivity Proxy (kyma-system) → Cloud Connector → SAP OnPremise System
+```
+
+**Important:** The connectivity-proxy is deployed in the `kyma-system` namespace as a Kyma module. Your application code communicates only with the Destination Service API, which internally routes through the connectivity-proxy.
+
+**Components:**
+- `destination-service.ts`: BTP Destination Service client with OAuth 2.0 authentication
+  - `DestinationServiceClient`: Manages OAuth tokens and retrieves destination configuration
+  - `loadDestinationServiceConfig()`: Loads configuration from environment variables
+  - `getAccessToken()`: OAuth 2.0 Client Credentials flow for BTP authentication
+  - `getDestination()`: Retrieves destination configuration including credentials
+
+- `business-partner-client.ts`: SAP Business Partner API client
+  - `BusinessPartnerClient`: Queries Business Partner data from SAP OnPremise
+  - `getBusinessPartner(id)`: Get specific Business Partner by ID
+  - `searchBusinessPartners(searchTerm, top)`: Search Business Partners by name
+  - `formatBusinessPartner(bp)`: Format Business Partner data for display
+
+- `types.ts`: TypeScript interfaces for SAP integration
+  - `DestinationServiceConfig`, `DestinationConfiguration`
+  - `BusinessPartner`, `BusinessPartnerAddress`
+  - `OAuthTokenResponse`, `DestinationServiceResponse`
+
+**Configuration Requirements:**
+- `BTP_DESTINATION_SERVICE_URL`: Destination Service URL from BTP service key
+- `BTP_DESTINATION_CLIENT_ID`: OAuth client ID for Destination Service
+- `BTP_DESTINATION_CLIENT_SECRET`: OAuth client secret for Destination Service
+- `BTP_DESTINATION_TOKEN_URL`: OAuth token endpoint URL
+- `BTP_DESTINATION_NAME`: Name of destination configured in BTP Cockpit
+
+**Authentication is optional** - If destination service configuration is not provided, SAP OnPremise tools will not be available.
+
+See [mcp-service/src/sap-onpremise/README.md](mcp-service/src/sap-onpremise/README.md) for complete setup guide.
 
 ### HTTP Transport & Session Management
 

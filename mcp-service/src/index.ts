@@ -46,6 +46,9 @@ import {
   requireSession,
   getTokenFromSession,
 } from "./auth/oauth-flow.js";
+import { DestinationServiceClient, loadDestinationServiceConfig } from "./sap-onpremise/destination-service.js";
+import { ConnectivityServiceClient, loadConnectivityServiceConfig } from "./sap-onpremise/connectivity-service.js";
+import { BusinessPartnerClient } from "./sap-onpremise/business-partner-client.js";
 
 /**
  * Tipo para una nota.
@@ -84,6 +87,39 @@ const sessionTokens: { [sessionId: string]: string } = {};
 const CAP_URL = process.env.CAP_SERVICE_URL || "http://localhost:4004";
 console.log(`🔗 Inicializando CAPClient con URL: ${CAP_URL}`);
 const capClient = new CAPClient(CAP_URL);
+
+// 🏢 Cliente SAP OnPremise para Business Partner API
+const destinationConfig = loadDestinationServiceConfig();
+const connectivityConfig = loadConnectivityServiceConfig();
+let businessPartnerClient: BusinessPartnerClient | null = null;
+
+if (destinationConfig) {
+  console.log(`🏢 Inicializando Business Partner Client con destino: ${destinationConfig.destinationName}`);
+  const destinationClient = new DestinationServiceClient(destinationConfig);
+
+  let connectivityClient: ConnectivityServiceClient | null = null;
+  if (connectivityConfig) {
+    console.log('🔗 Connectivity Service configurado - Se usará connectivity-proxy para llamadas OnPremise');
+    connectivityClient = new ConnectivityServiceClient(connectivityConfig);
+  } else {
+    console.warn('⚠️  Connectivity Service no configurado. Se intentará acceso directo (puede fallar para OnPremise).');
+  }
+
+  businessPartnerClient = new BusinessPartnerClient(destinationClient, connectivityClient);
+
+  // Validar conectividad en el inicio (sin bloquear el servidor)
+  businessPartnerClient.validateConnectivity().then((isValid) => {
+    if (isValid) {
+      console.log('✅ [Startup] Business Partner API connectivity validated successfully');
+    } else {
+      console.warn('⚠️ [Startup] Business Partner API connectivity validation failed - tool will be available but may not work');
+    }
+  }).catch((error) => {
+    console.error('❌ [Startup] Failed to validate Business Partner connectivity:', error.message);
+  });
+} else {
+  console.log(`⚠️ Business Partner Client no inicializado (configuración no encontrada)`);
+}
 
 // 🛠️ Crea el servidor MCP con capacidades de recursos, herramientas y prompts
 const server = new Server(
@@ -228,6 +264,38 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
           },
           required: ["orderId", "newStatus"],
+        },
+      },
+      {
+        name: "sap_get_business_partner",
+        description: "Obtiene información de un Business Partner específico desde el sistema SAP OnPremise vía Cloud Connector",
+        inputSchema: {
+          type: "object",
+          properties: {
+            businessPartnerId: {
+              type: "string",
+              description: "ID del Business Partner a consultar (ej: '1000001')",
+            },
+          },
+          required: ["businessPartnerId"],
+        },
+      },
+      {
+        name: "sap_search_business_partners",
+        description: "Busca Business Partners por nombre en el sistema SAP OnPremise vía Cloud Connector",
+        inputSchema: {
+          type: "object",
+          properties: {
+            searchTerm: {
+              type: "string",
+              description: "Término de búsqueda para filtrar por nombre",
+            },
+            top: {
+              type: "number",
+              description: "Número máximo de resultados a retornar (default: 10)",
+            },
+          },
+          required: ["searchTerm"],
         },
       },
     ],
@@ -388,6 +456,122 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
             {
               type: "text",
               text: `❌ Error al actualizar estado de orden: ${error.message}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+
+    case "sap_get_business_partner": {
+      if (!businessPartnerClient) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `❌ Business Partner API no está configurada. Por favor configure las variables de entorno BTP_DESTINATION_*`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      try {
+        const businessPartnerId = String(request.params.arguments?.businessPartnerId);
+
+        if (!businessPartnerId) {
+          throw new Error("businessPartnerId es requerido");
+        }
+
+        const businessPartner = await businessPartnerClient.getBusinessPartner(businessPartnerId);
+
+        if (!businessPartner) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ Business Partner ${businessPartnerId} no encontrado`,
+              },
+            ],
+          };
+        }
+
+        const formattedBP = businessPartnerClient.formatBusinessPartner(businessPartner);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `✅ Business Partner encontrado:\n\n${formattedBP}`,
+            },
+          ],
+        };
+      } catch (error: any) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `❌ Error al obtener Business Partner: ${error.message}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+
+    case "sap_search_business_partners": {
+      if (!businessPartnerClient) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `❌ Business Partner API no está configurada. Por favor configure las variables de entorno BTP_DESTINATION_*`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      try {
+        const searchTerm = String(request.params.arguments?.searchTerm);
+        const top = request.params.arguments?.top as number | undefined;
+
+        if (!searchTerm) {
+          throw new Error("searchTerm es requerido");
+        }
+
+        const businessPartners = await businessPartnerClient.searchBusinessPartners(searchTerm, top);
+
+        if (businessPartners.length === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ No se encontraron Business Partners con el término: "${searchTerm}"`,
+              },
+            ],
+          };
+        }
+
+        const formattedResults = businessPartners.map((bp, index) => {
+          return `${index + 1}. ${bp.BusinessPartner} - ${bp.BusinessPartnerFullName || bp.BusinessPartnerName || 'N/A'}\n` +
+                 `   Categoría: ${bp.BusinessPartnerCategory || 'N/A'}`;
+        }).join('\n\n');
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `✅ Business Partners encontrados: ${businessPartners.length}\n\n${formattedResults}`,
+            },
+          ],
+        };
+      } catch (error: any) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `❌ Error al buscar Business Partners: ${error.message}`,
             },
           ],
           isError: true,
