@@ -201,6 +201,32 @@ Configuration in `k8s/03-deployment.yaml`:
 - Resources: 256Mi-512Mi memory, 100m-500m CPU
 - Probes use `/health` endpoint
 
+### Kubernetes Configuration
+
+**IMPORTANT:** This project uses a local `.kubeconfig.yaml` file located in the project root.
+
+**All kubectl commands MUST use the `--kubeconfig` flag:**
+```bash
+kubectl --kubeconfig=".kubeconfig.yaml" <command>
+```
+
+**Examples:**
+```bash
+# Get pods
+kubectl --kubeconfig=".kubeconfig.yaml" get pods -n mcp-cap-integration
+
+# Apply deployment
+kubectl --kubeconfig=".kubeconfig.yaml" apply -f k8s/
+
+# Check logs
+kubectl --kubeconfig=".kubeconfig.yaml" logs -n mcp-cap-integration -l app=mcp-service
+
+# Wait for pod readiness
+kubectl --kubeconfig=".kubeconfig.yaml" wait --for=condition=ready pod -l app=mcp-service -n mcp-cap-integration --timeout=60s
+```
+
+**Never use kubectl without the --kubeconfig flag in this project.**
+
 ## MCP Client Configuration
 
 ### Claude Desktop
