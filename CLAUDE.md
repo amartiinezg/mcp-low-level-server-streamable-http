@@ -12,7 +12,9 @@ MCP (Model Context Protocol) server integrated with SAP CAP (Cloud Application P
 - CAP OData service for e-commerce catalog management
 - 4 MCP tools to interact with CAP OData endpoints
 - **SAP OnPremise Integration** - Business Partner API via BTP Destination Service and Cloud Connector
-- 2 MCP tools for Business Partner operations (get, search)
+- **Generic OData V2 Client** - Flexible query tool for any SAP OData V2 service
+- **Automatic Schema Discovery** - Parses and exposes OData V2 $metadata as MCP resource
+- 2 MCP tools for SAP OData operations (generic query + schema info)
 - Note-taking system (original MCP demo)
 - JWT token validation using JWKS (JSON Web Key Set)
 - Combined authentication (JWT Bearer token + OAuth session cookies)
@@ -37,17 +39,19 @@ npm run inspector    # Debug with MCP Inspector
 
 The server implements three MCP capability types:
 
-**Resources** - Notes accessible via `note:///` URIs
-- `ListResourcesRequestSchema`: Returns all notes as MCP resources
-- `ReadResourceRequestSchema`: Returns specific note content by ID
+**Resources** - Accessible information via MCP URIs
+- Notes via `note:///` URIs: Individual text notes
+- `sap://businesspartner/schema`: Complete OData V2 schema with entities, properties, and relationships for Business Partner API
+- `ListResourcesRequestSchema`: Returns all available resources
+- `ReadResourceRequestSchema`: Returns specific resource content by URI
 
 **Tools** - Actions invokable by MCP clients (6 total)
 - `create_note`: Creates notes with title and content (original demo)
 - `cap_list_products`: Lists all products from CAP OData, optionally filtered by low stock
 - `cap_create_order`: Creates purchase order with products and quantities
 - `cap_update_order_status`: Updates order status (PENDING/PROCESSING/SHIPPED/DELIVERED/CANCELLED)
-- `sap_get_business_partner`: Get Business Partner by ID from SAP OnPremise via Cloud Connector
-- `sap_search_business_partners`: Search Business Partners by name from SAP OnPremise
+- `sap_odata_query`: **Generic OData V2 query tool** - Query any EntitySet with flexible filters, select, expand, orderby, pagination
+- `sap_get_schema_info`: Get detailed schema information including entities, properties, keys, and relationships
 
 **Prompts** - Templates for LLM interactions
 - `summarize_notes`: Returns prompt with embedded note resources
@@ -120,16 +124,35 @@ MCP Server → BTP Destination Service → Connectivity Proxy (kyma-system) → 
   - `getAccessToken()`: OAuth 2.0 Client Credentials flow for BTP authentication
   - `getDestination()`: Retrieves destination configuration including credentials
 
-- `business-partner-client.ts`: SAP Business Partner API client
-  - `BusinessPartnerClient`: Queries Business Partner data from SAP OnPremise
-  - `getBusinessPartner(id)`: Get specific Business Partner by ID
-  - `searchBusinessPartners(searchTerm, top)`: Search Business Partners by name
-  - `formatBusinessPartner(bp)`: Format Business Partner data for display
+- `business-partner-client.ts`: SAP Business Partner API client (used for connectivity validation)
+  - `BusinessPartnerClient`: Validates connectivity to SAP OnPremise systems
+  - `validateConnectivity()`: Tests connection to SAP OnPremise via Cloud Connector
+  - Note: Specific query operations have been replaced by generic `ODataV2Client`
+
+- `odata-v2-client.ts`: **Generic OData V2 query client**
+  - `ODataV2Client`: Flexible query execution for any OData V2 EntitySet
+  - `query(options)`: Execute queries with $filter, $select, $expand, $orderby, $top, $skip, $inlinecount
+  - `queryRaw(path, params)`: Execute custom queries with raw paths (for function imports)
+  - `buildFilter`: Helper methods for building OData V2 filter expressions (eq, ne, gt, substringof, etc.)
+  - `formatResults(results)`: Format query results for display
+  - **Important:** Uses OData V2 syntax (e.g., `substringof('value', property)` instead of V4 `contains(property, 'value')`)
+
+- `odata-v2-metadata-parser.ts`: **OData V2 $metadata parser and schema manager**
+  - `ODataV2MetadataParser`: Parses and caches OData V2 service metadata
+  - `fetchMetadata()`: Fetch and parse $metadata XML, returns structured schema
+  - `getEntityType(name)`: Get specific entity type definition
+  - `getEntitySets()`: Get all available entity sets
+  - `getSchemaInfo()`: Generate human-readable schema summary
+  - `getEntityTypeDetails(name)`: Get detailed info for specific entity type
+  - `clearCache()`: Force metadata refresh
+  - Automatically caches metadata on startup for performance
 
 - `types.ts`: TypeScript interfaces for SAP integration
   - `DestinationServiceConfig`, `DestinationConfiguration`
   - `BusinessPartner`, `BusinessPartnerAddress`
   - `OAuthTokenResponse`, `DestinationServiceResponse`
+  - `ODataProperty`, `ODataNavigationProperty`, `ODataEntityType`
+  - `ODataEntitySet`, `ODataAssociation`, `ODataSchema`
 
 **Configuration Requirements:**
 - `BTP_DESTINATION_SERVICE_URL`: Destination Service URL from BTP service key
@@ -253,7 +276,7 @@ kubectl --kubeconfig=".kubeconfig.yaml" wait --for=condition=ready pod -l app=mc
   "mcpServers": {
     "mcp-cap-integration": {
       "type": "http",
-      "url": "https://mcp-service.a7dda9c.kyma.ondemand.com/mcp",
+      "url": "https://mcp-service.c-42fe4ef.kyma.ondemand.com/mcp",
       "headers": {
         "Authorization": "Bearer YOUR_ACCESS_TOKEN"
       }
@@ -273,7 +296,7 @@ kubectl --kubeconfig=".kubeconfig.yaml" wait --for=condition=ready pod -l app=mc
 {
   "mcpServers": {
     "mcp-cap-service": {
-      "url": "https://mcp-service.a7dda9c.kyma.ondemand.com/mcp",
+      "url": "https://mcp-service.c-42fe4ef.kyma.ondemand.com/mcp",
       "oauth": {
         "enabled": true,
         "clientId": "your-client-id",

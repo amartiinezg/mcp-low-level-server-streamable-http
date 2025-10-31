@@ -49,6 +49,8 @@ import {
 import { DestinationServiceClient, loadDestinationServiceConfig } from "./sap-onpremise/destination-service.js";
 import { ConnectivityServiceClient, loadConnectivityServiceConfig } from "./sap-onpremise/connectivity-service.js";
 import { BusinessPartnerClient } from "./sap-onpremise/business-partner-client.js";
+import { ODataV2MetadataParser } from "./sap-onpremise/odata-v2-metadata-parser.js";
+import { ODataV2Client } from "./sap-onpremise/odata-v2-client.js";
 
 /**
  * Tipo para una nota.
@@ -92,6 +94,8 @@ const capClient = new CAPClient(CAP_URL);
 const destinationConfig = loadDestinationServiceConfig();
 const connectivityConfig = loadConnectivityServiceConfig();
 let businessPartnerClient: BusinessPartnerClient | null = null;
+let odataV2Client: ODataV2Client | null = null;
+let metadataParser: ODataV2MetadataParser | null = null;
 
 if (destinationConfig) {
   console.log(`🏢 Inicializando Business Partner Client con destino: ${destinationConfig.destinationName}`);
@@ -107,10 +111,21 @@ if (destinationConfig) {
 
   businessPartnerClient = new BusinessPartnerClient(destinationClient, connectivityClient);
 
+  // Inicializar cliente OData V2 genérico y metadata parser
+  console.log('📋 Inicializando OData V2 Client y Metadata Parser');
+  odataV2Client = new ODataV2Client(destinationClient, connectivityClient);
+  metadataParser = new ODataV2MetadataParser(destinationClient, connectivityClient);
+
   // Validar conectividad en el inicio (sin bloquear el servidor)
   businessPartnerClient.validateConnectivity().then((isValid) => {
     if (isValid) {
       console.log('✅ [Startup] Business Partner API connectivity validated successfully');
+      // Pre-fetch metadata para caché
+      metadataParser?.fetchMetadata().then(() => {
+        console.log('✅ [Startup] OData metadata cached successfully');
+      }).catch((error) => {
+        console.warn('⚠️ [Startup] Failed to cache metadata:', error.message);
+      });
     } else {
       console.warn('⚠️ [Startup] Business Partner API connectivity validation failed - tool will be available but may not work');
     }
@@ -138,24 +153,55 @@ const server = new Server(
 );
 
 /**
- * 📋 Handler para listar notas como recursos MCP.
+ * 📋 Handler para listar recursos MCP (notas + schema OData).
  */
 server.setRequestHandler(ListResourcesRequestSchema, async () => {
-  return {
-    resources: Object.entries(notes).map(([id, note]) => ({
-      uri: `note:///${id}`,
+  const resources = Object.entries(notes).map(([id, note]) => ({
+    uri: `note:///${id}`,
+    mimeType: "text/plain",
+    name: note.title,
+    description: `A text note: ${note.title}`,
+  }));
+
+  // Add OData schema resource if available
+  if (metadataParser) {
+    resources.push({
+      uri: "sap://businesspartner/schema",
       mimeType: "text/plain",
-      name: note.title,
-      description: `A text note: ${note.title}`,
-    })),
-  };
+      name: "SAP Business Partner OData Schema",
+      description: "Complete OData V2 schema with entities, properties, and relationships for the Business Partner API",
+    });
+  }
+
+  return { resources };
 });
 
 /**
- * 📖 Handler para leer el contenido de una nota.
+ * 📖 Handler para leer el contenido de recursos (notas + schema OData).
  */
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const url = new URL(request.params.uri);
+
+  // Handle SAP OData schema resource
+  if (url.protocol === 'sap:' && url.pathname === '//businesspartner/schema') {
+    if (!metadataParser) {
+      throw new Error('OData schema not available - Business Partner API not configured');
+    }
+
+    const schemaInfo = await metadataParser.getSchemaInfo();
+
+    return {
+      contents: [
+        {
+          uri: request.params.uri,
+          mimeType: "text/plain",
+          text: schemaInfo,
+        },
+      ],
+    };
+  }
+
+  // Handle note resources
   const id = url.pathname.replace(/^\//, "");
   const note = notes[id];
 
@@ -267,35 +313,63 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "sap_get_business_partner",
-        description: "Obtiene información de un Business Partner específico desde el sistema SAP OnPremise vía Cloud Connector",
+        name: "sap_odata_query",
+        description: "Ejecuta consultas genéricas y flexibles al servicio SAP Business Partner OData V2. Permite consultar cualquier EntitySet con filtros, selección de propiedades, expansión de navegaciones, ordenamiento y paginación. Usa el resource 'sap://businesspartner/schema' o la tool 'sap_get_schema_info' para conocer las entidades disponibles.",
         inputSchema: {
           type: "object",
           properties: {
-            businessPartnerId: {
+            entitySet: {
               type: "string",
-              description: "ID del Business Partner a consultar (ej: '1000001')",
+              description: "Nombre del EntitySet a consultar (ej: 'A_BusinessPartner', 'A_BusinessPartnerAddress'). Consulta el schema para ver entidades disponibles.",
             },
-          },
-          required: ["businessPartnerId"],
-        },
-      },
-      {
-        name: "sap_search_business_partners",
-        description: "Busca Business Partners por nombre en el sistema SAP OnPremise vía Cloud Connector",
-        inputSchema: {
-          type: "object",
-          properties: {
-            searchTerm: {
+            key: {
               type: "string",
-              description: "Término de búsqueda para filtrar por nombre",
+              description: "Clave de la entidad para recuperar un registro específico (ej: '1000001'). Si se proporciona, retorna solo ese registro.",
+            },
+            filter: {
+              type: "string",
+              description: "Expresión de filtro OData V2 (ej: \"substringof('Smith',BusinessPartnerFullName)\", \"BusinessPartnerCategory eq '1'\")",
+            },
+            select: {
+              type: "string",
+              description: "Propiedades a seleccionar separadas por comas (ej: 'BusinessPartner,BusinessPartnerFullName,CreationDate')",
+            },
+            expand: {
+              type: "string",
+              description: "Propiedades de navegación a expandir separadas por comas (ej: 'to_BusinessPartnerAddress,to_BusinessPartnerRole')",
+            },
+            orderby: {
+              type: "string",
+              description: "Propiedad y dirección de ordenamiento (ej: 'CreationDate desc', 'BusinessPartnerFullName asc')",
             },
             top: {
               type: "number",
-              description: "Número máximo de resultados a retornar (default: 10)",
+              description: "Número máximo de registros a retornar (paginación)",
+            },
+            skip: {
+              type: "number",
+              description: "Número de registros a saltar (paginación)",
+            },
+            inlinecount: {
+              type: "string",
+              description: "Incluir conteo total de resultados ('allpages' o 'none')",
+              enum: ["allpages", "none"],
             },
           },
-          required: ["searchTerm"],
+          required: ["entitySet"],
+        },
+      },
+      {
+        name: "sap_get_schema_info",
+        description: "Obtiene información detallada sobre el schema del servicio OData V2 Business Partner, incluyendo EntitySets disponibles, propiedades de cada entidad, claves primarias, tipos de datos y relaciones/navegaciones. Usa esta herramienta antes de 'sap_odata_query' para saber qué entidades y propiedades están disponibles.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            entityType: {
+              type: "string",
+              description: "Nombre del tipo de entidad para obtener detalles específicos (ej: 'A_BusinessPartner'). Si no se proporciona, retorna un resumen de todas las entidades.",
+            },
+          },
         },
       },
     ],
@@ -463,13 +537,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       }
     }
 
-    case "sap_get_business_partner": {
-      if (!businessPartnerClient) {
+    case "sap_odata_query": {
+      if (!odataV2Client) {
         return {
           content: [
             {
               type: "text",
-              text: `❌ Business Partner API no está configurada. Por favor configure las variables de entorno BTP_DESTINATION_*`,
+              text: `❌ OData V2 Client no está configurado. Por favor configure las variables de entorno BTP_DESTINATION_*`,
             },
           ],
           isError: true,
@@ -477,32 +551,48 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       }
 
       try {
-        const businessPartnerId = String(request.params.arguments?.businessPartnerId);
+        const entitySet = String(request.params.arguments?.entitySet);
+        const key = request.params.arguments?.key as string | undefined;
+        const filter = request.params.arguments?.filter as string | undefined;
+        const select = request.params.arguments?.select as string | undefined;
+        const expand = request.params.arguments?.expand as string | undefined;
+        const orderby = request.params.arguments?.orderby as string | undefined;
+        const top = request.params.arguments?.top as number | undefined;
+        const skip = request.params.arguments?.skip as number | undefined;
+        const inlinecount = request.params.arguments?.inlinecount as 'allpages' | 'none' | undefined;
 
-        if (!businessPartnerId) {
-          throw new Error("businessPartnerId es requerido");
+        if (!entitySet) {
+          throw new Error("entitySet es requerido");
         }
 
-        const businessPartner = await businessPartnerClient.getBusinessPartner(businessPartnerId);
+        console.log(`[sap_odata_query] Consultando EntitySet: ${entitySet}`);
 
-        if (!businessPartner) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `❌ Business Partner ${businessPartnerId} no encontrado`,
-              },
-            ],
-          };
-        }
+        const result = await odataV2Client.query({
+          entitySet,
+          key,
+          filter,
+          select,
+          expand,
+          orderby,
+          top,
+          skip,
+          inlinecount,
+        });
 
-        const formattedBP = businessPartnerClient.formatBusinessPartner(businessPartner);
+        const formattedResults = ODataV2Client.formatResults(result.results, { maxResults: 20 });
+
+        let responseText = `✅ Consulta OData ejecutada exitosamente\n\n`;
+        responseText += `📊 EntitySet: ${entitySet}\n`;
+        if (key) responseText += `🔑 Key: ${key}\n`;
+        if (result.count !== undefined) responseText += `📈 Total count: ${result.count}\n`;
+        responseText += `📦 Resultados retornados: ${result.results.length}\n\n`;
+        responseText += formattedResults;
 
         return {
           content: [
             {
               type: "text",
-              text: `✅ Business Partner encontrado:\n\n${formattedBP}`,
+              text: responseText,
             },
           ],
         };
@@ -511,7 +601,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
           content: [
             {
               type: "text",
-              text: `❌ Error al obtener Business Partner: ${error.message}`,
+              text: `❌ Error al ejecutar consulta OData: ${error.message}`,
             },
           ],
           isError: true,
@@ -519,13 +609,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       }
     }
 
-    case "sap_search_business_partners": {
-      if (!businessPartnerClient) {
+    case "sap_get_schema_info": {
+      if (!metadataParser) {
         return {
           content: [
             {
               type: "text",
-              text: `❌ Business Partner API no está configurada. Por favor configure las variables de entorno BTP_DESTINATION_*`,
+              text: `❌ OData Metadata Parser no está configurado. Por favor configure las variables de entorno BTP_DESTINATION_*`,
             },
           ],
           isError: true,
@@ -533,45 +623,37 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       }
 
       try {
-        const searchTerm = String(request.params.arguments?.searchTerm);
-        const top = request.params.arguments?.top as number | undefined;
+        const entityType = request.params.arguments?.entityType as string | undefined;
 
-        if (!searchTerm) {
-          throw new Error("searchTerm es requerido");
-        }
-
-        const businessPartners = await businessPartnerClient.searchBusinessPartners(searchTerm, top);
-
-        if (businessPartners.length === 0) {
+        if (entityType) {
+          // Get details for specific entity type
+          const details = await metadataParser.getEntityTypeDetails(entityType);
           return {
             content: [
               {
                 type: "text",
-                text: `❌ No se encontraron Business Partners con el término: "${searchTerm}"`,
+                text: `✅ Detalles del Entity Type:\n\n${details}`,
+              },
+            ],
+          };
+        } else {
+          // Get schema overview
+          const schemaInfo = await metadataParser.getSchemaInfo();
+          return {
+            content: [
+              {
+                type: "text",
+                text: schemaInfo,
               },
             ],
           };
         }
-
-        const formattedResults = businessPartners.map((bp, index) => {
-          return `${index + 1}. ${bp.BusinessPartner} - ${bp.BusinessPartnerFullName || bp.BusinessPartnerName || 'N/A'}\n` +
-                 `   Categoría: ${bp.BusinessPartnerCategory || 'N/A'}`;
-        }).join('\n\n');
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `✅ Business Partners encontrados: ${businessPartners.length}\n\n${formattedResults}`,
-            },
-          ],
-        };
       } catch (error: any) {
         return {
           content: [
             {
               type: "text",
-              text: `❌ Error al buscar Business Partners: ${error.message}`,
+              text: `❌ Error al obtener información del schema: ${error.message}`,
             },
           ],
           isError: true,

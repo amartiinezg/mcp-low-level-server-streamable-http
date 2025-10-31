@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
       - name: mcp-service
-        image: docker.io/amartiinezg/mcp-service:v1.0.6-connectivity
+        image: docker.io/amartiinezg/mcp-service:1.0.1
         imagePullPolicy: Always
         ports:
         - containerPort: 3001
