@@ -51,6 +51,7 @@ import { ConnectivityServiceClient, loadConnectivityServiceConfig } from "./sap-
 import { BusinessPartnerClient } from "./sap-onpremise/business-partner-client.js";
 import { ODataV2MetadataParser } from "./sap-onpremise/odata-v2-metadata-parser.js";
 import { ODataV2Client } from "./sap-onpremise/odata-v2-client.js";
+import { ODataV2Validator } from "./sap-onpremise/odata-v2-validator.js";
 
 /**
  * Tipo para una nota.
@@ -314,13 +315,46 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "sap_odata_query",
-        description: "Ejecuta consultas genéricas y flexibles al servicio SAP Business Partner OData V2. Permite consultar cualquier EntitySet con filtros, selección de propiedades, expansión de navegaciones, ordenamiento y paginación. Usa el resource 'sap://businesspartner/schema' o la tool 'sap_get_schema_info' para conocer las entidades disponibles.",
+        description: `Ejecuta consultas al servicio SAP Business Partner OData V2 (S/4HANA 2022 On-Premise).
+
+⚠️  RESTRICCIONES IMPORTANTES DE S/4HANA 2022 ON-PREMISE:
+
+1. **$select + $expand NO COMPATIBLE**: No combines $select en la raíz con $expand. El expand desaparecerá de la respuesta.
+   ❌ INCORRECTO: entitySet='A_BusinessPartner', select='BusinessPartner,BusinessPartnerFullName', expand='to_BusinessPartnerAddress'
+   ✅ CORRECTO: entitySet='A_BusinessPartner', expand='to_BusinessPartnerAddress' (sin select, traer todos los campos de la raíz)
+
+2. **$select dentro de $expand NO SOPORTADO**: No puedes usar $expand=to_NavigationProperty($select=Field).
+   ❌ INCORRECTO: expand='to_BusinessPartnerAddress($select=StreetName,City)'
+   ✅ CORRECTO: expand='to_BusinessPartnerAddress' (traer todos los campos del expand, filtrar localmente si es necesario)
+
+3. **$filter con any() NO SOPORTADO**: No puedes filtrar sobre propiedades de navegación con any().
+   ❌ INCORRECTO: filter="to_BusinessPartnerAddress/any(d: d/Country eq 'ES')"
+   ✅ ALTERNATIVA 1: Traer con expand='to_BusinessPartnerAddress' y filtrar localmente en tu código
+   ✅ ALTERNATIVA 2: Hacer dos llamadas:
+      - Llamada 1: entitySet='A_BusinessPartner', expand='to_BusinessPartnerAddress'
+      - Llamada 2: entitySet='A_BusinessPartnerAddress', filter="Country eq 'ES'"
+
+4. **Datos de navegación profundos requieren llamadas directas**: Para datos como emails, roles, bancos, etc., si necesitas $filter o $select:
+   ✅ SOLUCIÓN: Llamada directa al EntitySet específico
+   - Ejemplo emails: entitySet='A_AddressEmailAddress', filter="AddressID eq '12345'", select='EmailAddress'
+   - Ejemplo bancos: entitySet='A_BusinessPartnerBank', filter="BusinessPartner eq '1000001'"
+   - Ejemplo roles: entitySet='A_BusinessPartnerRole', filter="BusinessPartner eq '1000001' and BusinessPartnerRole eq 'FLCU00'"
+
+5. **Siempre usa $format=json**: Ya incluido automáticamente en todas las peticiones.
+
+RECOMENDACIONES:
+- Prioriza traer datos completos con $expand y filtrar localmente cuando sea posible
+- Si necesitas filtros o selects específicos en navegaciones, haz llamadas directas a esos EntitySets
+- Usa $top en la raíz para limitar resultados, pero nunca sobre navegaciones
+- Para casos complejos, divide en múltiples llamadas simples
+
+Usa 'sap_get_schema_info' para conocer todas las entidades y navegaciones disponibles.`,
         inputSchema: {
           type: "object",
           properties: {
             entitySet: {
               type: "string",
-              description: "Nombre del EntitySet a consultar (ej: 'A_BusinessPartner', 'A_BusinessPartnerAddress'). Consulta el schema para ver entidades disponibles.",
+              description: "Nombre del EntitySet a consultar (ej: 'A_BusinessPartner', 'A_BusinessPartnerAddress', 'A_AddressEmailAddress'). Consulta el schema para ver entidades disponibles.",
             },
             key: {
               type: "string",
@@ -328,15 +362,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             filter: {
               type: "string",
-              description: "Expresión de filtro OData V2 (ej: \"substringof('Smith',BusinessPartnerFullName)\", \"BusinessPartnerCategory eq '1'\")",
+              description: "Expresión de filtro OData V2 SOLO para la entidad raíz (ej: \"substringof('Smith',BusinessPartnerFullName)\", \"BusinessPartnerCategory eq '1'\"). NO usar any() sobre navegaciones.",
             },
             select: {
               type: "string",
-              description: "Propiedades a seleccionar separadas por comas (ej: 'BusinessPartner,BusinessPartnerFullName,CreationDate')",
+              description: "Propiedades a seleccionar separadas por comas (ej: 'BusinessPartner,BusinessPartnerFullName'). ⚠️ NO combinar con $expand o el expand desaparecerá. Si usas expand, omite select y filtra localmente.",
             },
             expand: {
               type: "string",
-              description: "Propiedades de navegación a expandir separadas por comas (ej: 'to_BusinessPartnerAddress,to_BusinessPartnerRole')",
+              description: "Propiedades de navegación a expandir separadas por comas (ej: 'to_BusinessPartnerAddress,to_BusinessPartnerRole'). ⚠️ NO usar con $select en la raíz. NO soporta $select dentro del expand como 'to_Address($select=City)'.",
             },
             orderby: {
               type: "string",
@@ -344,7 +378,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             top: {
               type: "number",
-              description: "Número máximo de registros a retornar (paginación)",
+              description: "Número máximo de registros a retornar (paginación). Solo aplica a la entidad raíz.",
             },
             skip: {
               type: "number",
@@ -565,6 +599,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
           throw new Error("entitySet es requerido");
         }
 
+        // ✨ Validar query contra restricciones de S/4HANA 2022
+        const validation = ODataV2Validator.validateQuery({
+          entitySet,
+          select,
+          expand,
+          filter
+        });
+
+        // Si hay errores críticos, retornar advertencias sin ejecutar
+        if (!validation.isValid) {
+          const warningText = ODataV2Validator.formatWarnings(validation.warnings);
+          const suggestions = ODataV2Validator.suggestAlternatives({
+            entitySet,
+            select,
+            expand,
+            filter
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ Query NO compatible con S/4HANA 2022 On-Premise\n${warningText}${suggestions.length > 0 ? '\n' + suggestions.join('\n') : ''}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Si solo hay warnings (no errores), ejecutar pero mostrar advertencias
+        const warningText = validation.warnings.length > 0
+          ? ODataV2Validator.formatWarnings(validation.warnings)
+          : '';
+
         console.log(`[sap_odata_query] Consultando EntitySet: ${entitySet}`);
 
         const result = await odataV2Client.query({
@@ -581,7 +649,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
         const formattedResults = ODataV2Client.formatResults(result.results, { maxResults: 20 });
 
-        let responseText = `✅ Consulta OData ejecutada exitosamente\n\n`;
+        let responseText = warningText; // Incluir warnings si existen
+        responseText += `✅ Consulta OData ejecutada exitosamente\n\n`;
         responseText += `📊 EntitySet: ${entitySet}\n`;
         if (key) responseText += `🔑 Key: ${key}\n`;
         if (result.count !== undefined) responseText += `📈 Total count: ${result.count}\n`;

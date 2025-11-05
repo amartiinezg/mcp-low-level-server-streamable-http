@@ -6,10 +6,13 @@ Implementación de un servidor MCP (Model Context Protocol) usando la Low-Level 
 
 - **MCP Server** - Low-Level API con Streamable HTTP transport
 - **OAuth 2.0 Authentication** - Autenticación JWT con SAP Identity Authentication Service (IAS)
-- **OAuth Discovery** - Soporte completo para RFC 8414 y RFC 9728
+- **OAuth Discovery** - Soporte completo para RFC 8414 (sin RFC 9728 por compatibilidad con SAP IAS)
 - **CAP Integration** - Servicio OData para gestión de catálogo e-commerce
+- **SAP OnPremise Integration** - Integración con sistemas SAP On-Premise vía BTP Destination Service y Cloud Connector
+- **Generic OData V2 Client** - Cliente flexible para consultar cualquier servicio OData V2 de SAP
+- **Automatic Schema Discovery** - Parser de metadatos OData V2 que expone esquemas como recursos MCP
 - **Session Management** - Gestión de sesiones HTTP con headers
-- **3 MCP Tools** - Herramientas para interactuar con CAP OData
+- **6 MCP Tools** - 4 herramientas CAP + 2 herramientas SAP OData
 - **Kubernetes Ready** - Deployable en KYMA BTP
 - **Health Checks** - Endpoints para liveness y readiness probes
 
@@ -21,8 +24,15 @@ mcp-low-level-server-streamable-http/
 │   ├── src/
 │   │   ├── index.ts          # Servidor MCP principal
 │   │   ├── cap-integration.ts # Cliente HTTP para CAP
-│   │   └── auth/
-│   │       └── ias-auth.ts   # Módulo OAuth 2.0
+│   │   ├── auth/
+│   │   │   └── ias-auth.ts   # Módulo OAuth 2.0
+│   │   └── sap-onpremise/
+│   │       ├── destination-service.ts      # Cliente BTP Destination Service
+│   │       ├── business-partner-client.ts  # Cliente Business Partner API
+│   │       ├── odata-v2-client.ts         # Cliente genérico OData V2
+│   │       ├── odata-v2-metadata-parser.ts # Parser de metadatos OData V2
+│   │       ├── types.ts                    # Tipos TypeScript
+│   │       └── README.md                   # Documentación SAP OnPremise
 │   ├── Dockerfile
 │   └── package.json
 │
@@ -47,10 +57,9 @@ mcp-low-level-server-streamable-http/
 │       └── service.yaml
 │
 ├── docs/
-│   └── IAS_SETUP.md          # Guía completa OAuth 2.0
+│   └── DOCUMENTATION.md      # Documentación completa (OAuth 2.0, SAP OnPremise)
 │
 ├── CLAUDE.md                 # Guía para Claude Code
-├── OAUTH_IMPLEMENTATION_SUMMARY.md
 └── README.md                 # Este archivo
 ```
 
@@ -185,23 +194,25 @@ npm start
 
 ## 🛠️ MCP Tools
 
-El servidor MCP expone 4 herramientas:
+El servidor MCP expone 6 herramientas:
 
-### 1. `create_note`
+### Herramientas CAP (4)
+
+#### 1. `create_note`
 Crea notas de texto (demo original de MCP)
 
 **Parámetros:**
 - `title` (string) - Título de la nota
 - `content` (string) - Contenido de la nota
 
-### 2. `cap_list_products`
+#### 2. `cap_list_products`
 Lista productos del catálogo OData
 
 **Parámetros:**
 - `filterByLowStock` (boolean, opcional) - Filtrar por bajo stock
 - `threshold` (number, opcional) - Umbral de stock (default: 10)
 
-### 3. `cap_create_order`
+#### 3. `cap_create_order`
 Crea una orden de compra
 
 **Parámetros:**
@@ -210,12 +221,45 @@ Crea una orden de compra
   - `productId` (string) - UUID del producto
   - `quantity` (number) - Cantidad
 
-### 4. `cap_update_order_status`
+#### 4. `cap_update_order_status`
 Actualiza el estado de una orden
 
 **Parámetros:**
 - `orderId` (string) - UUID de la orden
 - `newStatus` (string) - PENDING | PROCESSING | SHIPPED | DELIVERED | CANCELLED
+
+### Herramientas SAP OnPremise (2)
+
+#### 5. `sap_odata_query`
+Ejecuta consultas flexibles sobre cualquier servicio OData V2 de SAP
+
+**Parámetros:**
+- `entitySet` (string) - Nombre del EntitySet (ej: "A_BusinessPartner")
+- `key` (string, opcional) - Clave del entity para consulta específica
+- `filter` (string, opcional) - Expresión $filter de OData V2
+- `select` (string, opcional) - Campos a retornar (separados por coma)
+- `expand` (string, opcional) - Propiedades de navegación a expandir
+- `orderby` (string, opcional) - Ordenamiento
+- `top` (number, opcional) - Límite de resultados
+- `skip` (number, opcional) - Offset para paginación
+- `inlinecount` (boolean, opcional) - Incluir conteo total
+
+**Restricciones S/4HANA 2022:**
+- ⚠️ No combinar `$select` con `$expand` en la misma consulta
+- ⚠️ No usar `$select` dentro de `$expand`
+- ⚠️ No usar filtros con `any()` lambda operator
+- 👉 Ver [CLAUDE.md](CLAUDE.md#sap-onpremise-odata-v2---s4hana-2022-restrictions) para detalles
+
+#### 6. `sap_get_schema_info`
+Obtiene información detallada del esquema OData V2
+
+**Parámetros:**
+- `entityType` (string, opcional) - Nombre del tipo de entidad para obtener detalles específicos
+
+**Retorna:**
+- Lista de todos los EntitySets disponibles
+- Propiedades, claves y tipos de datos
+- Propiedades de navegación y relaciones
 
 ## 📡 Endpoints HTTP
 
@@ -434,6 +478,70 @@ npm run inspector
 │  • SQLite Database      │
 └─────────────────────────┘
 ```
+
+## 🏢 Integración SAP OnPremise
+
+El MCP Server incluye integración completa con sistemas SAP On-Premise mediante BTP Destination Service y Cloud Connector.
+
+### Arquitectura de Conectividad
+
+```
+MCP Server
+  → BTP Destination Service
+    → Connectivity Proxy (kyma-system)
+      → Cloud Connector
+        → SAP OnPremise System
+```
+
+### Características
+
+- **Cliente Genérico OData V2**: Query flexible sobre cualquier servicio OData V2 de SAP
+- **Parser de Metadatos**: Descubrimiento automático de esquemas OData V2 como recursos MCP
+- **Soporte S/4HANA 2022**: Compatibilidad con restricciones específicas de OData V2 On-Premise
+- **BTP Destination Service**: Autenticación OAuth 2.0 Client Credentials para acceso a destinos
+- **Cloud Connector**: Túnel seguro hacia sistemas SAP On-Premise
+
+### Configuración
+
+**Variables de entorno requeridas:**
+
+```bash
+BTP_DESTINATION_SERVICE_URL=https://<subaccount>.dest.cfapps.<region>.hana.ondemand.com
+BTP_DESTINATION_CLIENT_ID=<client-id-from-service-key>
+BTP_DESTINATION_CLIENT_SECRET=<client-secret-from-service-key>
+BTP_DESTINATION_TOKEN_URL=https://<subdomain>.authentication.<region>.hana.ondemand.com/oauth/token
+BTP_DESTINATION_NAME=<your-destination-name>
+```
+
+### Restricciones S/4HANA 2022
+
+El servidor detecta automáticamente queries incompatibles con S/4HANA 2022 On-Premise:
+
+| Restricción | Problema | Workaround |
+|------------|----------|------------|
+| `$select` + `$expand` | Expand desaparece de la respuesta | Usar solo `$expand`, filtrar localmente |
+| `$select` en `$expand` | Error de sintaxis | Llamar EntitySet de navegación directamente |
+| `$filter` con `any()` | No soportado | Expandir y filtrar localmente, o query reverso |
+
+**Ejemplo - Query válido:**
+```json
+{
+  "entitySet": "A_BusinessPartner",
+  "expand": "to_BusinessPartnerAddress",
+  "top": 10
+}
+```
+
+**Ejemplo - Query inválido:**
+```json
+{
+  "entitySet": "A_BusinessPartner",
+  "select": "BusinessPartner,FirstName",  // ❌ No combinar con expand
+  "expand": "to_BusinessPartnerAddress"
+}
+```
+
+👉 **Documentación completa:** [mcp-service/src/sap-onpremise/README.md](mcp-service/src/sap-onpremise/README.md)
 
 ## 🔒 Seguridad
 

@@ -165,6 +165,232 @@ MCP Server → BTP Destination Service → Connectivity Proxy (kyma-system) → 
 
 See [mcp-service/src/sap-onpremise/README.md](mcp-service/src/sap-onpremise/README.md) for complete setup guide.
 
+## SAP OnPremise OData V2 - S/4HANA 2022 Restrictions
+
+This project integrates with **S/4HANA 2022 On-Premise** via OData V2. This version has specific restrictions that differ from newer OData V4 or cloud versions.
+
+### Critical Restrictions
+
+#### 1. ❌ $select + $expand Incompatibility
+
+**Problem**: Combining `$select` on the root entity with `$expand` causes the expand to disappear from the response.
+
+**Example - WRONG**:
+```typescript
+// This will return ONLY selected fields, expand will be ignored
+{
+  entitySet: 'A_BusinessPartner',
+  select: 'BusinessPartner,BusinessPartnerFullName',
+  expand: 'to_BusinessPartnerAddress'
+}
+```
+
+**Solution - CORRECT**:
+```typescript
+// Option 1: Omit $select, get all root fields with expand
+{
+  entitySet: 'A_BusinessPartner',
+  expand: 'to_BusinessPartnerAddress'
+  // Filter fields locally in your code
+}
+
+// Option 2: Make two separate calls
+// Call 1: Get navigation data
+{ entitySet: 'A_BusinessPartner', expand: 'to_BusinessPartnerAddress' }
+// Call 2: Get specific root fields
+{ entitySet: 'A_BusinessPartner', select: 'BusinessPartner,BusinessPartnerFullName' }
+```
+
+#### 2. ❌ $select Inside $expand Not Supported
+
+**Problem**: OData V2 in S/4HANA 2022 doesn't support `$expand=NavigationProperty($select=Field)` syntax.
+
+**Example - WRONG**:
+```typescript
+{
+  entitySet: 'A_BusinessPartner',
+  expand: 'to_BusinessPartnerAddress($select=City,Country)'  // ❌ Syntax error
+}
+```
+
+**Solution - CORRECT**:
+```typescript
+// Option 1: Expand without $select, filter locally
+{
+  entitySet: 'A_BusinessPartner',
+  expand: 'to_BusinessPartnerAddress'
+}
+
+// Option 2: Direct call to navigation EntitySet
+{
+  entitySet: 'A_BusinessPartnerAddress',
+  filter: 'BusinessPartner eq "1000001"',
+  select: 'AddressID,City,Country,StreetName'
+}
+```
+
+#### 3. ❌ $filter with any() Not Supported
+
+**Problem**: Cannot filter on navigation properties using `any()` lambda operator.
+
+**Example - WRONG**:
+```typescript
+{
+  entitySet: 'A_BusinessPartner',
+  filter: "to_BusinessPartnerAddress/any(d: d/Country eq 'ES')"  // ❌ Not supported
+}
+```
+
+**Solution - CORRECT**:
+```typescript
+// Option 1: Expand and filter locally
+{
+  entitySet: 'A_BusinessPartner',
+  expand: 'to_BusinessPartnerAddress'
+}
+// Then in your code: filter BPs that have addresses with Country='ES'
+
+// Option 2: Reverse query - query the navigation EntitySet directly
+{
+  entitySet: 'A_BusinessPartnerAddress',
+  filter: "Country eq 'ES'"
+}
+// Result will include BusinessPartner IDs you can use
+```
+
+#### 4. 📧 Deep Navigation Data Requires Direct Calls
+
+**Problem**: Data like emails, phone numbers, bank accounts require direct EntitySet queries for filtering/selecting.
+
+**Example - Email addresses**:
+```typescript
+// Step 1: Get Business Partner with addresses
+{
+  entitySet: 'A_BusinessPartner',
+  key: '1000001',
+  expand: 'to_BusinessPartnerAddress'
+}
+// Note the AddressID from results
+
+// Step 2: Get emails for that address
+{
+  entitySet: 'A_AddressEmailAddress',
+  filter: "AddressID eq '12345'",
+  select: 'EmailAddress,IsDefaultEmailAddress'
+}
+```
+
+**Example - Bank accounts**:
+```typescript
+{
+  entitySet: 'A_BusinessPartnerBank',
+  filter: "BusinessPartner eq '1000001'",
+  select: 'BankAccount,BankNumber,BankCountryKey'
+}
+```
+
+**Example - Roles**:
+```typescript
+{
+  entitySet: 'A_BusinessPartnerRole',
+  filter: "BusinessPartner eq '1000001' and BusinessPartnerRole eq 'FLCU00'"
+}
+```
+
+### Best Practices for S/4HANA 2022 On-Premise
+
+1. **Prioritize Compatibility**: Use simple expands without $select, bring complete data and filter locally
+2. **Use $top on Root Only**: Limit results with `$top` on the root entity, never on navigation properties
+3. **Always Include $format=json**: Automatically included by the client
+4. **Break Complex Queries**: Divide into multiple simple calls instead of one complex query
+5. **Direct EntitySet Calls**: For specific navigation data needs, call the navigation EntitySet directly
+6. **Test Incrementally**: Start with simple queries, add complexity gradually
+7. **Use Schema Info**: Call `sap_get_schema_info` to discover available EntitySets and navigation properties
+
+### AI Agent Guidance
+
+When working with this MCP server, the AI should:
+
+1. **Detect Incompatible Patterns**: The `sap_odata_query` tool includes validation that will warn about incompatible query patterns
+2. **Suggest Alternatives**: When validation fails, the tool provides specific alternative approaches
+3. **Multi-Call Strategy**: For complex requirements, suggest breaking into multiple sequential calls:
+   - Call 1: Get root entity with basic expand
+   - Call 2: Get detailed navigation data with filters/selects
+   - Combine results in code
+4. **Context from Expand**: When data is available in an expand, use it directly rather than making additional calls
+5. **Filter Locally When Possible**: If expand returns the needed data, filter in application code
+
+### Common Scenarios
+
+#### Scenario: Find Business Partners in a specific country
+
+```typescript
+// ❌ WRONG - any() not supported
+{
+  entitySet: 'A_BusinessPartner',
+  filter: "to_BusinessPartnerAddress/any(d: d/Country eq 'US')"
+}
+
+// ✅ CORRECT - Approach 1: Expand and filter locally
+{
+  entitySet: 'A_BusinessPartner',
+  expand: 'to_BusinessPartnerAddress',
+  top: 100
+}
+// Filter locally: BPs where any address has Country='US'
+
+// ✅ CORRECT - Approach 2: Reverse query
+{
+  entitySet: 'A_BusinessPartnerAddress',
+  filter: "Country eq 'US'",
+  select: 'BusinessPartner,AddressID,City'
+}
+// Get unique BusinessPartner IDs from results
+```
+
+#### Scenario: Get specific BP with address and emails
+
+```typescript
+// Call 1: Get BP with addresses
+{
+  entitySet: 'A_BusinessPartner',
+  key: '1000001',
+  expand: 'to_BusinessPartnerAddress'
+}
+
+// From response, note AddressID (e.g., '12345')
+
+// Call 2: Get emails for that address
+{
+  entitySet: 'A_AddressEmailAddress',
+  filter: "AddressID eq '12345'"
+}
+```
+
+#### Scenario: Search BPs by name, need only specific fields
+
+```typescript
+// ✅ CORRECT - No expand, can use select
+{
+  entitySet: 'A_BusinessPartner',
+  filter: "substringof('Smith',BusinessPartnerFullName)",
+  select: 'BusinessPartner,BusinessPartnerFullName,BusinessPartnerCategory',
+  top: 10
+}
+```
+
+#### Scenario: Get BP with all navigation data
+
+```typescript
+// ✅ CORRECT - Multiple expands, no select
+{
+  entitySet: 'A_BusinessPartner',
+  key: '1000001',
+  expand: 'to_BusinessPartnerAddress,to_BusinessPartnerRole,to_BusinessPartnerBank'
+}
+// Get all data, filter in code if needed
+```
+
 ### HTTP Transport & Session Management
 
 Uses `StreamableHTTPServerTransport` from MCP SDK for HTTP-based sessions:
