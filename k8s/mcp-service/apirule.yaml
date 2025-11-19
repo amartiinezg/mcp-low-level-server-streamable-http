@@ -8,7 +8,7 @@ metadata:
 spec:
   gateway: kyma-system/kyma-gateway
   hosts:
-    - mcp-service.c-42fe4ef.kyma.ondemand.com
+    - mcp-service.c-3efd68e.kyma.ondemand.com
   service:
     name: mcp-service
     port: 3001

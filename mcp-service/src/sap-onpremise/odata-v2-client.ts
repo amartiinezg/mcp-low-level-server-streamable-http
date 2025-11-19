@@ -79,6 +79,13 @@ export class ODataV2Client {
       const destination = await this.destinationClient.getDestination();
       const config = destination.destinationConfiguration;
 
+      // Log sap-client configuration
+      if (config['sap-client']) {
+        console.log(`[OData V2 Client] Using sap-client: ${config['sap-client']}`);
+      } else {
+        console.log('[OData V2 Client] No sap-client configured in destination');
+      }
+
       // Build entity path
       let entityPath = `${this.baseServicePath}/${options.entitySet}`;
       if (options.key) {
@@ -87,6 +94,11 @@ export class ODataV2Client {
 
       // Build query parameters
       const queryParams: string[] = ['$format=json'];
+
+      // Add sap-client if configured in destination
+      if (config['sap-client']) {
+        queryParams.push(`sap-client=${config['sap-client']}`);
+      }
 
       if (options.filter) {
         queryParams.push(`$filter=${encodeURIComponent(options.filter)}`);

@@ -86,6 +86,14 @@ const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
 // Mapa de tokens por sesión (para pasar el token al CAP service)
 const sessionTokens: { [sessionId: string]: string } = {};
 
+// 📊 Sistema de tracking de schema por sesión (para auto-inyección inteligente)
+interface SessionSchemaTracking {
+  businessPartnerSchemaProvided: boolean;
+  glAccountSchemaProvided: boolean;
+  lastActivity: Date;
+}
+const sessionSchemaTracking: { [sessionId: string]: SessionSchemaTracking } = {};
+
 // 🔗 Cliente CAP para interactuar con OData
 const CAP_URL = process.env.CAP_SERVICE_URL || "http://localhost:4004";
 console.log(`🔗 Inicializando CAPClient con URL: ${CAP_URL}`);
@@ -95,11 +103,15 @@ const capClient = new CAPClient(CAP_URL);
 const destinationConfig = loadDestinationServiceConfig();
 const connectivityConfig = loadConnectivityServiceConfig();
 let businessPartnerClient: BusinessPartnerClient | null = null;
-let odataV2Client: ODataV2Client | null = null;
-let metadataParser: ODataV2MetadataParser | null = null;
+let bpODataClient: ODataV2Client | null = null;
+let bpMetadataParser: ODataV2MetadataParser | null = null;
+
+// 🏢 Cliente SAP OnPremise para G/L Account Balances
+let glAccountODataClient: ODataV2Client | null = null;
+let glAccountMetadataParser: ODataV2MetadataParser | null = null;
 
 if (destinationConfig) {
-  console.log(`🏢 Inicializando Business Partner Client con destino: ${destinationConfig.destinationName}`);
+  console.log(`🏢 Inicializando SAP OnPremise Clients con destino: ${destinationConfig.destinationName}`);
   const destinationClient = new DestinationServiceClient(destinationConfig);
 
   let connectivityClient: ConnectivityServiceClient | null = null;
@@ -110,31 +122,59 @@ if (destinationConfig) {
     console.warn('⚠️  Connectivity Service no configurado. Se intentará acceso directo (puede fallar para OnPremise).');
   }
 
+  // ==================== Business Partner Client ====================
   businessPartnerClient = new BusinessPartnerClient(destinationClient, connectivityClient);
 
-  // Inicializar cliente OData V2 genérico y metadata parser
-  console.log('📋 Inicializando OData V2 Client y Metadata Parser');
-  odataV2Client = new ODataV2Client(destinationClient, connectivityClient);
-  metadataParser = new ODataV2MetadataParser(destinationClient, connectivityClient);
+  // Inicializar cliente OData V2 para Business Partner
+  console.log('📋 Inicializando Business Partner OData V2 Client');
+  bpODataClient = new ODataV2Client(
+    destinationClient,
+    connectivityClient,
+    '/sap/opu/odata/sap/API_BUSINESS_PARTNER'
+  );
+  bpMetadataParser = new ODataV2MetadataParser(
+    destinationClient,
+    connectivityClient,
+    '/sap/opu/odata/sap/API_BUSINESS_PARTNER'
+  );
+
+  // ==================== G/L Account Balances Client ====================
+  console.log('💰 Inicializando G/L Account Balances OData V2 Client');
+  glAccountODataClient = new ODataV2Client(
+    destinationClient,
+    connectivityClient,
+    '/sap/opu/odata/sap/UI_GLACCOUNT_BALANCES'
+  );
+  glAccountMetadataParser = new ODataV2MetadataParser(
+    destinationClient,
+    connectivityClient,
+    '/sap/opu/odata/sap/UI_GLACCOUNT_BALANCES'
+  );
 
   // Validar conectividad en el inicio (sin bloquear el servidor)
   businessPartnerClient.validateConnectivity().then((isValid) => {
     if (isValid) {
       console.log('✅ [Startup] Business Partner API connectivity validated successfully');
-      // Pre-fetch metadata para caché
-      metadataParser?.fetchMetadata().then(() => {
-        console.log('✅ [Startup] OData metadata cached successfully');
+      // Pre-fetch metadata para caché de ambos servicios
+      bpMetadataParser?.fetchMetadata().then(() => {
+        console.log('✅ [Startup] Business Partner metadata cached successfully');
       }).catch((error) => {
-        console.warn('⚠️ [Startup] Failed to cache metadata:', error.message);
+        console.warn('⚠️ [Startup] Failed to cache Business Partner metadata:', error.message);
+      });
+
+      glAccountMetadataParser?.fetchMetadata().then(() => {
+        console.log('✅ [Startup] G/L Account Balances metadata cached successfully');
+      }).catch((error) => {
+        console.warn('⚠️ [Startup] Failed to cache G/L Account Balances metadata:', error.message);
       });
     } else {
-      console.warn('⚠️ [Startup] Business Partner API connectivity validation failed - tool will be available but may not work');
+      console.warn('⚠️ [Startup] SAP OnPremise connectivity validation failed - tools will be available but may not work');
     }
   }).catch((error) => {
-    console.error('❌ [Startup] Failed to validate Business Partner connectivity:', error.message);
+    console.error('❌ [Startup] Failed to validate SAP OnPremise connectivity:', error.message);
   });
 } else {
-  console.log(`⚠️ Business Partner Client no inicializado (configuración no encontrada)`);
+  console.log(`⚠️ SAP OnPremise Clients no inicializados (configuración no encontrada)`);
 }
 
 // 🛠️ Crea el servidor MCP con capacidades de recursos, herramientas y prompts
@@ -164,8 +204,8 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
     description: `A text note: ${note.title}`,
   }));
 
-  // Add OData schema resource if available
-  if (metadataParser) {
+  // Add OData schema resources if available
+  if (bpMetadataParser) {
     resources.push({
       uri: "sap://businesspartner/schema",
       mimeType: "text/plain",
@@ -174,22 +214,50 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
     });
   }
 
+  if (glAccountMetadataParser) {
+    resources.push({
+      uri: "sap://glaccount/schema",
+      mimeType: "text/plain",
+      name: "SAP G/L Account Balances OData Schema",
+      description: "Complete OData V2 schema for G/L Account Balances CDS view",
+    });
+  }
+
   return { resources };
 });
 
 /**
- * 📖 Handler para leer el contenido de recursos (notas + schema OData).
+ * 📖 Handler para leer el contenido de recursos (notas + schemas OData).
  */
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const url = new URL(request.params.uri);
 
-  // Handle SAP OData schema resource
+  // Handle SAP Business Partner OData schema resource
   if (url.protocol === 'sap:' && url.pathname === '//businesspartner/schema') {
-    if (!metadataParser) {
-      throw new Error('OData schema not available - Business Partner API not configured');
+    if (!bpMetadataParser) {
+      throw new Error('Business Partner OData schema not available - Business Partner API not configured');
     }
 
-    const schemaInfo = await metadataParser.getSchemaInfo();
+    const schemaInfo = await bpMetadataParser.getSchemaInfo();
+
+    return {
+      contents: [
+        {
+          uri: request.params.uri,
+          mimeType: "text/plain",
+          text: schemaInfo,
+        },
+      ],
+    };
+  }
+
+  // Handle SAP G/L Account Balances OData schema resource
+  if (url.protocol === 'sap:' && url.pathname === '//glaccount/schema') {
+    if (!glAccountMetadataParser) {
+      throw new Error('G/L Account Balances OData schema not available - SAP OnPremise not configured');
+    }
+
+    const schemaInfo = await glAccountMetadataParser.getSchemaInfo();
 
     return {
       contents: [
@@ -314,8 +382,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
-        name: "sap_odata_query",
+        name: "sap_businesspartner_query",
         description: `Ejecuta consultas al servicio SAP Business Partner OData V2 (S/4HANA 2022 On-Premise).
+
+🚀 **AUTO-SCHEMA**: En la primera query de la sesión, el schema se incluye automáticamente en la respuesta para tu contexto.
 
 ⚠️  RESTRICCIONES IMPORTANTES DE S/4HANA 2022 ON-PREMISE:
 
@@ -348,13 +418,13 @@ RECOMENDACIONES:
 - Usa $top en la raíz para limitar resultados, pero nunca sobre navegaciones
 - Para casos complejos, divide en múltiples llamadas simples
 
-Usa 'sap_get_schema_info' para conocer todas las entidades y navegaciones disponibles.`,
+EntitySets principales: A_BusinessPartner, A_BusinessPartnerAddress, A_AddressEmailAddress, A_BusinessPartnerBank, A_BusinessPartnerRole, A_BusinessPartnerTaxNumber`,
         inputSchema: {
           type: "object",
           properties: {
             entitySet: {
               type: "string",
-              description: "Nombre del EntitySet a consultar (ej: 'A_BusinessPartner', 'A_BusinessPartnerAddress', 'A_AddressEmailAddress'). Consulta el schema para ver entidades disponibles.",
+              description: "Nombre del EntitySet a consultar (ej: 'A_BusinessPartner', 'A_BusinessPartnerAddress', 'A_AddressEmailAddress').",
             },
             key: {
               type: "string",
@@ -394,16 +464,100 @@ Usa 'sap_get_schema_info' para conocer todas las entidades y navegaciones dispon
         },
       },
       {
-        name: "sap_get_schema_info",
-        description: "Obtiene información detallada sobre el schema del servicio OData V2 Business Partner, incluyendo EntitySets disponibles, propiedades de cada entidad, claves primarias, tipos de datos y relaciones/navegaciones. Usa esta herramienta antes de 'sap_odata_query' para saber qué entidades y propiedades están disponibles.",
+        name: "sap_glaccount_query",
+        description: `Ejecuta consultas al servicio SAP G/L Account Balances OData V2 basado en CDS (S/4HANA 2022 On-Premise).
+
+🚀 **AUTO-SCHEMA**: En la primera query de la sesión, el schema se incluye automáticamente en la respuesta para tu contexto.
+
+🔑 CLAVES REQUERIDAS:
+Esta CDS require que siempre se proporcionen filtros para estas 3 claves:
+- **Ledger**: Ledger (ej: '0L')
+- **CompanyCode**: Código de sociedad (ej: '1010')
+- **LedgerFiscalYear**: Año fiscal (ej: '2024')
+
+Si no proporcionas estos filtros, la consulta fallará.
+
+🛡️  $SELECT OBLIGATORIO PARA CDS:
+Las CDS views requieren SIEMPRE un $select para evitar SHORTDUMP (error crítico SAP):
+- Si proporcionas "select": Se usa tal cual
+- Si NO proporcionas "select": Se auto-genera desde los campos del filter
+- Si el filter no tiene campos: Se usa un conjunto mínimo por defecto
+
+⚠️  RESTRICCIONES DE S/4HANA 2022 ON-PREMISE:
+Las mismas restricciones que Business Partner aplican aquí:
+1. NO combinar $select con $expand
+2. NO usar $select dentro de $expand
+3. NO usar $filter con any()
+
+EJEMPLOS DE USO:
+✅ Query básico (auto-genera select desde filter):
+   filter="Ledger eq '0L' and CompanyCode eq '1010' and LedgerFiscalYear eq '2024'"
+   → Auto-select: "Ledger,CompanyCode,LedgerFiscalYear"
+
+✅ Query con filtros adicionales (auto-genera select):
+   filter="Ledger eq '0L' and CompanyCode eq '1010' and LedgerFiscalYear eq '2024' and GLAccount eq '100000'"
+   → Auto-select: "Ledger,CompanyCode,LedgerFiscalYear,GLAccount"
+
+✅ Con selección explícita de campos:
+   filter="Ledger eq '0L' and CompanyCode eq '1010' and LedgerFiscalYear eq '2024'",
+   select="GLAccount,GLAccountName,AmountInCompanyCodeCurrency"`,
         inputSchema: {
           type: "object",
           properties: {
-            entityType: {
+            entitySet: {
               type: "string",
-              description: "Nombre del tipo de entidad para obtener detalles específicos (ej: 'A_BusinessPartner'). Si no se proporciona, retorna un resumen de todas las entidades.",
+              description: "Nombre del EntitySet a consultar. Para G/L Account Balances normalmente es el nombre de la CDS view.",
+            },
+            filter: {
+              type: "string",
+              description: "⚠️ REQUERIDO: Debe incluir Ledger, CompanyCode y LedgerFiscalYear. Ejemplo: \"Ledger eq '0L' and CompanyCode eq '1010' and LedgerFiscalYear eq '2024'\"",
+            },
+            select: {
+              type: "string",
+              description: "Propiedades a seleccionar separadas por comas (ej: 'GLAccount,GLAccountName,AmountInCompanyCodeCurrency'). No combinar con $expand.",
+            },
+            expand: {
+              type: "string",
+              description: "Propiedades de navegación a expandir separadas por comas. ⚠️ NO usar con $select en la raíz.",
+            },
+            orderby: {
+              type: "string",
+              description: "Propiedad y dirección de ordenamiento (ej: 'GLAccount asc', 'AmountInCompanyCodeCurrency desc')",
+            },
+            top: {
+              type: "number",
+              description: "Número máximo de registros a retornar (paginación).",
+            },
+            skip: {
+              type: "number",
+              description: "Número de registros a saltar (paginación)",
+            },
+            inlinecount: {
+              type: "string",
+              description: "Incluir conteo total de resultados ('allpages' o 'none')",
+              enum: ["allpages", "none"],
             },
           },
+          required: ["entitySet", "filter"],
+        },
+      },
+      {
+        name: "sap_get_schema_info",
+        description: "Obtiene información detallada sobre el schema de servicios OData V2 SAP (Business Partner o G/L Account Balances), incluyendo EntitySets disponibles, propiedades de cada entidad, claves primarias, tipos de datos y relaciones/navegaciones.\n\n💡 **NOTA**: El schema se incluye automáticamente en la primera query de cada servicio. Usa esta herramienta solo si necesitas:\n  • Ver el schema completo antes de hacer queries\n  • Obtener detalles específicos de un EntityType\n  • Debugging o exploración del schema",
+        inputSchema: {
+          type: "object",
+          properties: {
+            service: {
+              type: "string",
+              description: "Servicio SAP a consultar: 'businesspartner' para Business Partner API o 'glaccount' para G/L Account Balances",
+              enum: ["businesspartner", "glaccount"],
+            },
+            entityType: {
+              type: "string",
+              description: "Nombre del tipo de entidad para obtener detalles específicos (ej: 'A_BusinessPartner', 'GLAccountBalance'). Si no se proporciona, retorna un resumen de todas las entidades.",
+            },
+          },
+          required: ["service"],
         },
       },
     ],
@@ -422,6 +576,55 @@ function getCurrentSessionToken(): string | undefined {
     return sessionTokens[sessionIds[sessionIds.length - 1]];
   }
   return undefined;
+}
+
+/**
+ * 📊 Helpers para tracking de schema por sesión
+ */
+function getCurrentSessionId(): string | undefined {
+  // Obtener el session ID de la última sesión activa
+  const sessionIds = Object.keys(transports);
+  if (sessionIds.length > 0) {
+    return sessionIds[sessionIds.length - 1];
+  }
+  return undefined;
+}
+
+function initializeSessionTracking(sessionId: string): void {
+  if (!sessionSchemaTracking[sessionId]) {
+    sessionSchemaTracking[sessionId] = {
+      businessPartnerSchemaProvided: false,
+      glAccountSchemaProvided: false,
+      lastActivity: new Date(),
+    };
+  }
+}
+
+function hasSchemaBeenProvided(sessionId: string | undefined, service: 'businesspartner' | 'glaccount'): boolean {
+  if (!sessionId || !sessionSchemaTracking[sessionId]) {
+    return false;
+  }
+
+  const tracking = sessionSchemaTracking[sessionId];
+  if (service === 'businesspartner') {
+    return tracking.businessPartnerSchemaProvided;
+  } else {
+    return tracking.glAccountSchemaProvided;
+  }
+}
+
+function markSchemaAsProvided(sessionId: string | undefined, service: 'businesspartner' | 'glaccount'): void {
+  if (!sessionId) return;
+
+  initializeSessionTracking(sessionId);
+  const tracking = sessionSchemaTracking[sessionId];
+
+  if (service === 'businesspartner') {
+    tracking.businessPartnerSchemaProvided = true;
+  } else {
+    tracking.glAccountSchemaProvided = true;
+  }
+  tracking.lastActivity = new Date();
 }
 
 /**
@@ -571,13 +774,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       }
     }
 
-    case "sap_odata_query": {
-      if (!odataV2Client) {
+    case "sap_businesspartner_query": {
+      if (!bpODataClient) {
         return {
           content: [
             {
               type: "text",
-              text: `❌ OData V2 Client no está configurado. Por favor configure las variables de entorno BTP_DESTINATION_*`,
+              text: `❌ Business Partner OData Client no está configurado. Por favor configure las variables de entorno BTP_DESTINATION_*`,
             },
           ],
           isError: true,
@@ -633,9 +836,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
           ? ODataV2Validator.formatWarnings(validation.warnings)
           : '';
 
-        console.log(`[sap_odata_query] Consultando EntitySet: ${entitySet}`);
+        console.log(`[sap_businesspartner_query] Consultando EntitySet: ${entitySet}`);
 
-        const result = await odataV2Client.query({
+        const result = await bpODataClient.query({
           entitySet,
           key,
           filter,
@@ -649,8 +852,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
         const formattedResults = ODataV2Client.formatResults(result.results, { maxResults: 20 });
 
-        let responseText = warningText; // Incluir warnings si existen
-        responseText += `✅ Consulta OData ejecutada exitosamente\n\n`;
+        // 🚀 AUTO-INYECCIÓN DE SCHEMA: Si es la primera query de Business Partner en esta sesión, incluir schema
+        const currentSessionId = getCurrentSessionId();
+        let schemaSection = '';
+
+        if (!hasSchemaBeenProvided(currentSessionId, 'businesspartner')) {
+          console.log(`[sap_businesspartner_query] Primera query de BP en sesión ${currentSessionId} - incluyendo schema automáticamente`);
+
+          if (bpMetadataParser) {
+            try {
+              const schemaInfo = await bpMetadataParser.getSchemaInfo();
+              schemaSection = `\n📋 SCHEMA INFORMATION (auto-included on first query):\n`;
+              schemaSection += `${'='.repeat(70)}\n\n`;
+              schemaSection += schemaInfo;
+              schemaSection += `\n\n${'='.repeat(70)}\n`;
+              schemaSection += `💡 This schema is now in your context. You can reference EntitySets and properties directly.\n`;
+              schemaSection += `💡 For detailed info on a specific EntityType, use: sap_get_schema_info service='businesspartner' entityType='<name>'\n\n`;
+
+              // Marcar que ya se proporcionó el schema
+              markSchemaAsProvided(currentSessionId, 'businesspartner');
+            } catch (error) {
+              console.error('[sap_businesspartner_query] Error obteniendo schema:', error);
+            }
+          }
+        }
+
+        let responseText = schemaSection; // Incluir schema si es primera vez
+        responseText += warningText; // Incluir warnings si existen
+        responseText += `✅ Business Partner - Consulta OData ejecutada exitosamente\n\n`;
         responseText += `📊 EntitySet: ${entitySet}\n`;
         if (key) responseText += `🔑 Key: ${key}\n`;
         if (result.count !== undefined) responseText += `📈 Total count: ${result.count}\n`;
@@ -666,11 +895,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
           ],
         };
       } catch (error: any) {
+        // 🚀 Validación proactiva: Si el error parece ser de EntityType o propiedad no válida, incluir schema
+        const entitySet = String(request.params.arguments?.entitySet || '');
+        let errorMessage = `❌ Error al ejecutar consulta Business Partner OData: ${error.message}`;
+
+        // Detectar errores relacionados con schema inválido
+        const isSchemaError = error.message.includes('not found') ||
+                              error.message.includes('invalid') ||
+                              error.message.includes('does not exist') ||
+                              error.message.includes('Unknown') ||
+                              error.message.toLowerCase().includes('property');
+
+        if (isSchemaError && bpMetadataParser) {
+          try {
+            // Agregar información del schema para ayudar al usuario
+            const schemaInfo = await bpMetadataParser.getSchemaInfo();
+            errorMessage += `\n\n💡 **Available Schema:**\n\n`;
+            errorMessage += `📋 EntitySets disponibles:\n${schemaInfo.split('\n').slice(0, 30).join('\n')}`;
+            errorMessage += `\n\n... (usa 'sap_get_schema_info' con service='businesspartner' para ver el schema completo)`;
+          } catch (schemaError) {
+            console.error('[sap_businesspartner_query] Error obteniendo schema:', schemaError);
+          }
+        }
+
         return {
           content: [
             {
               type: "text",
-              text: `❌ Error al ejecutar consulta OData: ${error.message}`,
+              text: errorMessage,
             },
           ],
           isError: true,
@@ -678,13 +930,356 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       }
     }
 
+    case "sap_glaccount_query": {
+      if (!glAccountODataClient) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `❌ G/L Account Balances OData Client no está configurado. Por favor configure las variables de entorno BTP_DESTINATION_*`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      try {
+        const entitySet = String(request.params.arguments?.entitySet);
+        const filter = request.params.arguments?.filter as string | undefined;
+        const select = request.params.arguments?.select as string | undefined;
+        const expand = request.params.arguments?.expand as string | undefined;
+        const orderby = request.params.arguments?.orderby as string | undefined;
+        const top = request.params.arguments?.top as number | undefined;
+        const skip = request.params.arguments?.skip as number | undefined;
+        const inlinecount = request.params.arguments?.inlinecount as 'allpages' | 'none' | undefined;
+
+        if (!entitySet) {
+          throw new Error("entitySet es requerido");
+        }
+
+        if (!filter) {
+          throw new Error("filter es requerido para G/L Account Balances");
+        }
+
+        // ✨ Validar que el filter contenga las 3 claves requeridas
+        const hasLedger = /Ledger\s+eq\s+'/i.test(filter);
+        const hasCompanyCode = /CompanyCode\s+eq\s+'/i.test(filter);
+        const hasLedgerFiscalYear = /LedgerFiscalYear\s+eq\s+'/i.test(filter);
+
+        if (!hasLedger || !hasCompanyCode || !hasLedgerFiscalYear) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ Filter inválido para G/L Account Balances
+
+🔑 Esta CDS requiere que el filter incluya las 3 claves obligatorias:
+  ${!hasLedger ? '❌' : '✅'} Ledger (ej: "Ledger eq '0L'")
+  ${!hasCompanyCode ? '❌' : '✅'} CompanyCode (ej: "CompanyCode eq '1010'")
+  ${!hasLedgerFiscalYear ? '❌' : '✅'} LedgerFiscalYear (ej: "LedgerFiscalYear eq '2024'")
+
+✅ Ejemplo correcto:
+filter="Ledger eq '0L' and CompanyCode eq '1010' and LedgerFiscalYear eq '2024'"
+
+✅ Con filtros adicionales:
+filter="Ledger eq '0L' and CompanyCode eq '1010' and LedgerFiscalYear eq '2024' and GLAccount eq '100000'"`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // 🔍 VALIDAR PROPIEDADES CONTRA SCHEMA (evitar alucinaciones de la IA)
+        if (!glAccountMetadataParser) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ Metadata parser no disponible. No se puede validar propiedades contra schema.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Obtener schema del EntitySet
+        const metadata = await glAccountMetadataParser.fetchMetadata();
+        const entitySetSchema = metadata.entitySets.find((es: any) => es.name === entitySet);
+
+        if (!entitySetSchema) {
+          // Listar EntitySets disponibles
+          const availableEntitySets = metadata.entitySets.slice(0, 10).map((es: any) => es.name).join(', ');
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ EntitySet '${entitySet}' no encontrado en el schema de G/L Account Balances.
+
+📋 EntitySets disponibles: ${availableEntitySets}...
+
+💡 Usa la herramienta 'sap_get_schema_info' con service='glaccount' para ver todos los EntitySets disponibles.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        const entityTypeName = entitySetSchema.entityType.split('.').pop() || entitySetSchema.entityType;
+        const entityType = metadata.entityTypes.find((et: any) => et.name === entityTypeName);
+        if (!entityType) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ EntityType '${entityTypeName}' no encontrado en el schema.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Obtener propiedades válidas del EntityType
+        const validProperties = new Set(entityType.properties.map((p: any) => p.name));
+        console.log(`[G/L Account] EntitySet '${entitySet}' has ${validProperties.size} properties`);
+
+        // VALIDAR propiedades del $select (si se proporciona explícitamente)
+        if (select) {
+          const selectFields = select.split(',').map(f => f.trim());
+          const invalidSelectFields = selectFields.filter(f => !validProperties.has(f));
+
+          if (invalidSelectFields.length > 0) {
+            const validPropertiesList = Array.from(validProperties).slice(0, 20).join(', ');
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `❌ Propiedades inválidas en $select para EntitySet '${entitySet}':
+${invalidSelectFields.map(f => `  ❌ ${f}`).join('\n')}
+
+✅ Propiedades válidas disponibles en '${entityTypeName}':
+${validPropertiesList}${validProperties.size > 20 ? `, ... y ${validProperties.size - 20} más` : ''}
+
+💡 Usa 'sap_get_schema_info' con service='glaccount' y entityType='${entityTypeName}' para ver todas las propiedades.`,
+                },
+              ],
+              isError: true,
+            };
+          }
+        }
+
+        // VALIDAR propiedades del $filter
+        // Word boundaries (\b) para asegurar que eq, le, etc. son operadores completos, no parte de nombres de campo
+        const fieldPattern = /([A-Z]\w+)\s+(?:\beq\b|\bne\b|\bgt\b|\bge\b|\blt\b|\ble\b|substringof)/gi;
+        const filterMatches = [...filter.matchAll(fieldPattern)];
+        const filterFields = [...new Set(filterMatches.map((m: any) => m[1]))];
+        console.log(`[G/L Account] Filter: ${filter}`);
+        console.log(`[G/L Account] Extracted filter fields: ${filterFields.join(', ')}`);
+        const sqlOperators = new Set(['and', 'or', 'not', 'AND', 'OR', 'NOT']);
+        const invalidFilterFields = filterFields.filter(f => !sqlOperators.has(f) && !validProperties.has(f));
+        console.log(`[G/L Account] Invalid filter fields: ${invalidFilterFields.join(', ')}`);
+
+        if (invalidFilterFields.length > 0) {
+          const validPropertiesList = Array.from(validProperties).slice(0, 20).join(', ');
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ Propiedades inválidas en $filter para EntitySet '${entitySet}':
+${invalidFilterFields.map(f => `  ❌ ${f}`).join('\n')}
+
+✅ Propiedades válidas disponibles en '${entityTypeName}':
+${validPropertiesList}${validProperties.size > 20 ? `, ... y ${validProperties.size - 20} más` : ''}
+
+💡 Usa 'sap_get_schema_info' con service='glaccount' y entityType='${entityTypeName}' para ver todas las propiedades.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // 🔧 AUTO-GENERAR $select si no se proporciona (CDS requiere $select obligatorio)
+        let finalSelect = select;
+        if (!finalSelect && !expand) {
+          try {
+            // Ya tenemos filterFields validados, usarlos para generar select
+            const validFilterFields = filterFields.filter(f => !sqlOperators.has(f) && validProperties.has(f));
+
+            if (validFilterFields.length > 0) {
+              // Usar los campos válidos del filter
+              finalSelect = validFilterFields.join(',');
+              console.log(`[G/L Account] Auto-generated $select from filter (validated): ${finalSelect}`);
+            } else {
+              // Conjunto mínimo de campos por defecto (validados contra schema)
+              const defaultFields = ['Ledger', 'CompanyCode', 'LedgerFiscalYear', 'GLAccount'];
+              const validDefaults = defaultFields.filter((f: string) => validProperties.has(f));
+              finalSelect = validDefaults.join(',');
+              console.log(`[G/L Account] Using default $select (validated): ${finalSelect}`);
+            }
+          } catch (error: any) {
+            console.error(`[G/L Account] Error auto-generating select: ${error.message}`);
+            // Fallback: usar conjunto mínimo sin validación
+            finalSelect = 'Ledger,CompanyCode,LedgerFiscalYear,GLAccount';
+            console.log(`[G/L Account] Using fallback $select: ${finalSelect}`);
+          }
+        }
+
+        // ✨ Validar query contra restricciones de S/4HANA 2022
+        const validation = ODataV2Validator.validateQuery({
+          entitySet,
+          select: finalSelect,
+          expand,
+          filter
+        });
+
+        // Si hay errores críticos, retornar advertencias sin ejecutar
+        if (!validation.isValid) {
+          const warningText = ODataV2Validator.formatWarnings(validation.warnings);
+          const suggestions = ODataV2Validator.suggestAlternatives({
+            entitySet,
+            select: finalSelect,
+            expand,
+            filter
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `❌ Query NO compatible con S/4HANA 2022 On-Premise\n${warningText}${suggestions.length > 0 ? '\n' + suggestions.join('\n') : ''}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Si solo hay warnings (no errores), ejecutar pero mostrar advertencias
+        const warningText = validation.warnings.length > 0
+          ? ODataV2Validator.formatWarnings(validation.warnings)
+          : '';
+
+        console.log(`[sap_glaccount_query] Consultando EntitySet: ${entitySet}`);
+
+        const result = await glAccountODataClient.query({
+          entitySet,
+          filter,
+          select: finalSelect,
+          expand,
+          orderby,
+          top,
+          skip,
+          inlinecount,
+        });
+
+        const formattedResults = ODataV2Client.formatResults(result.results, { maxResults: 20 });
+
+        // 🚀 AUTO-INYECCIÓN DE SCHEMA: Si es la primera query de G/L Account en esta sesión, incluir schema
+        const currentSessionId = getCurrentSessionId();
+        let schemaSection = '';
+
+        if (!hasSchemaBeenProvided(currentSessionId, 'glaccount')) {
+          console.log(`[sap_glaccount_query] Primera query de G/L Account en sesión ${currentSessionId} - incluyendo schema automáticamente`);
+
+          if (glAccountMetadataParser) {
+            try {
+              const schemaInfo = await glAccountMetadataParser.getSchemaInfo();
+              schemaSection = `\n📋 SCHEMA INFORMATION (auto-included on first query):\n`;
+              schemaSection += `${'='.repeat(70)}\n\n`;
+              schemaSection += schemaInfo;
+              schemaSection += `\n\n${'='.repeat(70)}\n`;
+              schemaSection += `💡 This schema is now in your context. You can reference EntitySets and properties directly.\n`;
+              schemaSection += `💡 For detailed info on a specific EntityType, use: sap_get_schema_info service='glaccount' entityType='<name>'\n\n`;
+
+              // Marcar que ya se proporcionó el schema
+              markSchemaAsProvided(currentSessionId, 'glaccount');
+            } catch (error) {
+              console.error('[sap_glaccount_query] Error obteniendo schema:', error);
+            }
+          }
+        }
+
+        let responseText = schemaSection; // Incluir schema si es primera vez
+        responseText += warningText; // Incluir warnings si existen
+        responseText += `✅ G/L Account Balances - Consulta OData ejecutada exitosamente\n\n`;
+        responseText += `📊 EntitySet: ${entitySet}\n`;
+        if (result.count !== undefined) responseText += `📈 Total count: ${result.count}\n`;
+        responseText += `📦 Resultados retornados: ${result.results.length}\n\n`;
+        responseText += formattedResults;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: responseText,
+            },
+          ],
+        };
+      } catch (error: any) {
+        // 🚀 Validación proactiva: Si el error parece ser de EntityType o propiedad no válida, incluir schema
+        const entitySet = String(request.params.arguments?.entitySet || '');
+        let errorMessage = `❌ Error al ejecutar consulta G/L Account Balances OData: ${error.message}`;
+
+        // Detectar errores relacionados con schema inválido
+        const isSchemaError = error.message.includes('not found') ||
+                              error.message.includes('invalid') ||
+                              error.message.includes('does not exist') ||
+                              error.message.includes('Unknown') ||
+                              error.message.toLowerCase().includes('property');
+
+        if (isSchemaError && glAccountMetadataParser) {
+          try {
+            // Agregar información del schema para ayudar al usuario
+            const schemaInfo = await glAccountMetadataParser.getSchemaInfo();
+            errorMessage += `\n\n💡 **Available Schema:**\n\n`;
+            errorMessage += `📋 EntitySets disponibles:\n${schemaInfo.split('\n').slice(0, 30).join('\n')}`;
+            errorMessage += `\n\n... (usa 'sap_get_schema_info' con service='glaccount' para ver el schema completo)`;
+          } catch (schemaError) {
+            console.error('[sap_glaccount_query] Error obteniendo schema:', schemaError);
+          }
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: errorMessage,
+            },
+          ],
+          isError: true,
+          };
+      }
+    }
+
     case "sap_get_schema_info": {
+      const service = request.params.arguments?.service as string;
+
+      // Select appropriate parser based on service parameter
+      let metadataParser: ODataV2MetadataParser | null = null;
+      let serviceName: string = "";
+
+      if (service === "businesspartner") {
+        metadataParser = bpMetadataParser;
+        serviceName = "Business Partner";
+      } else if (service === "glaccount") {
+        metadataParser = glAccountMetadataParser;
+        serviceName = "G/L Account Balances";
+      } else {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `❌ Servicio desconocido: '${service}'. Usa 'businesspartner' o 'glaccount'.`,
+            },
+          ],
+          isError: true,
+        };
+      }
+
       if (!metadataParser) {
         return {
           content: [
             {
               type: "text",
-              text: `❌ OData Metadata Parser no está configurado. Por favor configure las variables de entorno BTP_DESTINATION_*`,
+              text: `❌ ${serviceName} Metadata Parser no está configurado. Por favor configure las variables de entorno BTP_DESTINATION_*`,
             },
           ],
           isError: true,
@@ -694,6 +1289,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       try {
         const entityType = request.params.arguments?.entityType as string | undefined;
 
+        // 📊 Marcar que el schema fue proporcionado explícitamente
+        const currentSessionId = getCurrentSessionId();
+        markSchemaAsProvided(currentSessionId, service as 'businesspartner' | 'glaccount');
+
         if (entityType) {
           // Get details for specific entity type
           const details = await metadataParser.getEntityTypeDetails(entityType);
@@ -701,7 +1300,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
             content: [
               {
                 type: "text",
-                text: `✅ Detalles del Entity Type:\n\n${details}`,
+                text: `✅ ${serviceName} - Detalles del Entity Type:\n\n${details}`,
               },
             ],
           };
@@ -712,7 +1311,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
             content: [
               {
                 type: "text",
-                text: schemaInfo,
+                text: `✅ ${serviceName} - Schema Info:\n\n${schemaInfo}`,
               },
             ],
           };
@@ -722,7 +1321,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
           content: [
             {
               type: "text",
-              text: `❌ Error al obtener información del schema: ${error.message}`,
+              text: `❌ Error al obtener información del schema de ${serviceName}: ${error.message}`,
             },
           ],
           isError: true,
@@ -736,7 +1335,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 });
 
 /**
- * 💡 Handler para listar prompts disponibles (solo "summarize_notes").
+ * 💡 Handler para listar prompts disponibles.
  */
 server.setRequestHandler(ListPromptsRequestSchema, async () => {
   return {
@@ -745,49 +1344,170 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
         name: "summarize_notes",
         description: "Summarize all notes",
       },
+      {
+        name: "sap_businesspartner_query_with_schema",
+        description: "Query SAP Business Partner API with automatic schema context. Use this prompt instead of directly calling tools to get faster results and avoid invalid queries.",
+        arguments: [
+          {
+            name: "query_description",
+            description: "Natural language description of what you want to query (e.g., 'Find business partners with name Smith', 'Get addresses for BP 1000001')",
+            required: true,
+          },
+        ],
+      },
+      {
+        name: "sap_glaccount_query_with_schema",
+        description: "Query SAP G/L Account Balances with automatic schema context. Use this prompt instead of directly calling tools to get faster results and avoid invalid queries.",
+        arguments: [
+          {
+            name: "query_description",
+            description: "Natural language description of what you want to query (e.g., 'Get balances for company code 1010 in ledger 0L for 2024')",
+            required: true,
+          },
+        ],
+      },
     ],
   };
 });
 
 /**
- * 🧠 Handler para el prompt "summarize_notes".
+ * 🧠 Handler para prompts.
  */
 server.setRequestHandler(GetPromptRequestSchema, async (request) => {
-  if (request.params.name !== "summarize_notes") {
-    throw new Error("Unknown prompt");
+  const promptName = request.params.name;
+
+  // Prompt: summarize_notes
+  if (promptName === "summarize_notes") {
+    const embeddedNotes = Object.entries(notes).map(([id, note]) => ({
+      type: "resource" as const,
+      resource: {
+        uri: `note:///${id}`,
+        mimeType: "text/plain",
+        text: note.content,
+      },
+    }));
+
+    return {
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: "Please summarize the following notes:",
+          },
+        },
+        ...embeddedNotes.map((note) => ({
+          role: "user" as const,
+          content: note,
+        })),
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: "Provide a concise summary of all the notes above.",
+          },
+        },
+      ],
+    };
   }
 
-  const embeddedNotes = Object.entries(notes).map(([id, note]) => ({
-    type: "resource" as const,
-    resource: {
-      uri: `note:///${id}`,
-      mimeType: "text/plain",
-      text: note.content,
-    },
-  }));
+  // Prompt: sap_businesspartner_query_with_schema
+  if (promptName === "sap_businesspartner_query_with_schema") {
+    const queryDescription = request.params.arguments?.query_description as string;
 
-  return {
-    messages: [
-      {
-        role: "user",
-        content: {
-          type: "text",
-          text: "Please summarize the following notes:",
+    if (!queryDescription) {
+      throw new Error("query_description argument is required");
+    }
+
+    // Obtener el schema automáticamente
+    let schemaInfo = "Business Partner schema not available";
+    if (bpMetadataParser) {
+      try {
+        schemaInfo = await bpMetadataParser.getSchemaInfo();
+      } catch (error) {
+        console.error("[Prompt] Error obteniendo schema de Business Partner:", error);
+        schemaInfo = "⚠️ Error loading Business Partner schema. Available EntitySets: A_BusinessPartner, A_BusinessPartnerAddress, A_AddressEmailAddress, A_BusinessPartnerBank, A_BusinessPartnerRole";
+      }
+    }
+
+    return {
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `📋 SAP Business Partner API Schema:
+
+${schemaInfo}
+
+⚠️ IMPORTANT RESTRICTIONS (S/4HANA 2022 On-Premise OData V2):
+1. ❌ DO NOT combine $select with $expand - the expand will disappear
+2. ❌ DO NOT use $select inside $expand - syntax not supported
+3. ❌ DO NOT use $filter with any() lambda operator
+4. ✅ For complex queries, use multiple simple calls
+5. ✅ Query navigation EntitySets directly when needed
+
+👤 User Query: "${queryDescription}"
+
+📝 Task: Based on the schema above and the restrictions, construct the appropriate query using the 'sap_odata_query' tool. If the query needs multiple calls, explain the strategy first.`,
+          },
         },
-      },
-      ...embeddedNotes.map((note) => ({
-        role: "user" as const,
-        content: note,
-      })),
-      {
-        role: "user",
-        content: {
-          type: "text",
-          text: "Provide a concise summary of all the notes above.",
+      ],
+    };
+  }
+
+  // Prompt: sap_glaccount_query_with_schema
+  if (promptName === "sap_glaccount_query_with_schema") {
+    const queryDescription = request.params.arguments?.query_description as string;
+
+    if (!queryDescription) {
+      throw new Error("query_description argument is required");
+    }
+
+    // Obtener el schema automáticamente
+    let schemaInfo = "G/L Account Balances schema not available";
+    if (glAccountMetadataParser) {
+      try {
+        schemaInfo = await glAccountMetadataParser.getSchemaInfo();
+      } catch (error) {
+        console.error("[Prompt] Error obteniendo schema de G/L Account:", error);
+        schemaInfo = "⚠️ Error loading G/L Account schema. This service requires filters for: Ledger, CompanyCode, LedgerFiscalYear";
+      }
+    }
+
+    return {
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `📋 SAP G/L Account Balances Schema:
+
+${schemaInfo}
+
+🔑 MANDATORY FILTERS (CDS Requirement):
+- Ledger (e.g., '0L')
+- CompanyCode (e.g., '1010')
+- LedgerFiscalYear (e.g., '2024')
+
+🛡️ MANDATORY $SELECT for CDS:
+CDS views require ALWAYS a $select to avoid SHORTDUMP. If you don't provide it, one will be auto-generated.
+
+⚠️ RESTRICTIONS (S/4HANA 2022 On-Premise OData V2):
+1. ❌ DO NOT combine $select with $expand
+2. ❌ DO NOT use $select inside $expand
+3. ❌ DO NOT use $filter with any()
+
+👤 User Query: "${queryDescription}"
+
+📝 Task: Based on the schema above and the mandatory requirements, construct the appropriate query using the 'sap_glaccount_query' tool.`,
+          },
         },
-      },
-    ],
-  };
+      ],
+    };
+  }
+
+  throw new Error(`Unknown prompt: ${promptName}`);
 });
 
 /**************** Fin de la configuración del servidor MCP ****************/

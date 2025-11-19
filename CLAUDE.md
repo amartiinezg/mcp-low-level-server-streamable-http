@@ -502,7 +502,7 @@ kubectl --kubeconfig=".kubeconfig.yaml" wait --for=condition=ready pod -l app=mc
   "mcpServers": {
     "mcp-cap-integration": {
       "type": "http",
-      "url": "https://mcp-service.c-42fe4ef.kyma.ondemand.com/mcp",
+      "url": "https://mcp-service.c-3efd68e.kyma.ondemand.com/mcp",
       "headers": {
         "Authorization": "Bearer YOUR_ACCESS_TOKEN"
       }
@@ -522,7 +522,7 @@ kubectl --kubeconfig=".kubeconfig.yaml" wait --for=condition=ready pod -l app=mc
 {
   "mcpServers": {
     "mcp-cap-service": {
-      "url": "https://mcp-service.c-42fe4ef.kyma.ondemand.com/mcp",
+      "url": "https://mcp-service.c-3efd68e.kyma.ondemand.com/mcp",
       "oauth": {
         "enabled": true,
         "clientId": "your-client-id",

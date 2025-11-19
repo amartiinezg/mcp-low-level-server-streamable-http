@@ -94,8 +94,20 @@ export class ODataV2MetadataParser {
 
       console.log('[OData Metadata] Fetching $metadata...');
 
+      // Log sap-client configuration
+      if (config['sap-client']) {
+        console.log(`[OData Metadata] Using sap-client: ${config['sap-client']}`);
+      } else {
+        console.log('[OData Metadata] No sap-client configured in destination');
+      }
+
       const metadataPath = `${this.baseServicePath}/$metadata`;
-      const requestUrl = `${config.URL}${metadataPath}`;
+
+      // Build URL with optional sap-client parameter
+      let requestUrl = `${config.URL}${metadataPath}`;
+      if (config['sap-client']) {
+        requestUrl += `?sap-client=${config['sap-client']}`;
+      }
 
       const headers: Record<string, string> = {
         'Accept': 'application/xml',
