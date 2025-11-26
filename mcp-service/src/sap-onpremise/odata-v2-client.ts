@@ -16,6 +16,9 @@ export interface ODataV2QueryOptions {
   /** Entity key for single entity retrieval (e.g., "'1000001'") */
   key?: string;
 
+  /** Function import parameters (for CDS with parameters like C_GLACCOUNTBALANCEQUERY) */
+  functionParams?: Record<string, string>;
+
   /** $filter parameter (OData V2 syntax) */
   filter?: string;
 
@@ -88,7 +91,19 @@ export class ODataV2Client {
 
       // Build entity path
       let entityPath = `${this.baseServicePath}/${options.entitySet}`;
-      if (options.key) {
+
+      // Handle function imports with parameters (e.g., C_GLACCOUNTBALANCEQUERY)
+      if (options.functionParams) {
+        // Build function parameters string: P_Param1='value1',P_Param2='value2'
+        const paramPairs = Object.entries(options.functionParams).map(([key, value]) => {
+          // Values are already formatted (e.g., "'1010'" or "datetime'2024-01-01T00:00:00'")
+          return `${key}=${encodeURIComponent(value)}`;
+        });
+        entityPath += `(${paramPairs.join(',')})`;
+        // For function imports, append /Results to get the result set
+        entityPath += '/Results';
+      } else if (options.key) {
+        // Regular entity key
         entityPath += `(${options.key})`;
       }
 
@@ -307,6 +322,7 @@ export class ODataV2Client {
     options?: {
       properties?: string[];
       maxResults?: number;
+      maxProperties?: number;
     }
   ): string {
     const maxResults = options?.maxResults || 10;
@@ -331,13 +347,23 @@ export class ODataV2Client {
           .join(', ');
         formatted += props;
       } else {
-        // Display all properties
-        const props = Object.entries(result as any)
-          .filter(([key, value]) => !key.startsWith('__') && value !== null && value !== undefined)
-          .slice(0, 5)
+        // Display all properties (or limited by maxProperties if specified)
+        const allProps = Object.entries(result as any)
+          .filter(([key, value]) => !key.startsWith('__') && value !== null && value !== undefined);
+
+        const propsToShow = options?.maxProperties !== undefined
+          ? allProps.slice(0, options.maxProperties)
+          : allProps; // Show all properties by default
+
+        const props = propsToShow
           .map(([key, value]) => `${key}: ${value}`)
           .join(', ');
         formatted += props;
+
+        // Indicate if properties were truncated
+        if (options?.maxProperties !== undefined && allProps.length > options.maxProperties) {
+          formatted += ` ... (${allProps.length - options.maxProperties} more fields)`;
+        }
       }
 
       formatted += '\n';
