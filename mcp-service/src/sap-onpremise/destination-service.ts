@@ -1,6 +1,7 @@
 /**
  * SAP BTP Destination Service Client
  * Handles OAuth authentication and destination retrieval
+ * Supports both Kyma and Cloud Foundry environments
  */
 
 import axios, { AxiosInstance } from 'axios';
@@ -10,6 +11,7 @@ import type {
   DestinationServiceResponse,
   DestinationConfiguration,
 } from './types.js';
+import { detectPlatform, getCloudFoundryServiceCredentials } from './platform-detector.js';
 
 export class DestinationServiceClient {
   private config: DestinationServiceConfig;
@@ -113,8 +115,32 @@ export class DestinationServiceClient {
 
 /**
  * Load Destination Service configuration from environment variables
+ * Supports both Kyma (env vars) and Cloud Foundry (VCAP_SERVICES)
  */
 export function loadDestinationServiceConfig(): DestinationServiceConfig | null {
+  const platform = detectPlatform();
+
+  console.log(`[Destination Service] Detected platform: ${platform}`);
+
+  // Try Cloud Foundry VCAP_SERVICES first
+  if (platform === 'cloudfoundry') {
+    const credentials = getCloudFoundryServiceCredentials('destination');
+    if (credentials) {
+      console.log('[Destination Service] Loading configuration from VCAP_SERVICES');
+
+      const destinationName = process.env.BTP_DESTINATION_NAME || 'SAP_OnPremise';
+
+      return {
+        url: credentials.uri,
+        clientId: credentials.clientid,
+        clientSecret: credentials.clientsecret,
+        tokenUrl: credentials.token_service_url || `${credentials.url}/oauth/token`,
+        destinationName,
+      };
+    }
+  }
+
+  // Fallback to environment variables (Kyma or local)
   const url = process.env.BTP_DESTINATION_SERVICE_URL;
   const clientId = process.env.BTP_DESTINATION_CLIENT_ID;
   const clientSecret = process.env.BTP_DESTINATION_CLIENT_SECRET;
@@ -122,10 +148,12 @@ export function loadDestinationServiceConfig(): DestinationServiceConfig | null 
   const destinationName = process.env.BTP_DESTINATION_NAME;
 
   if (!url || !clientId || !clientSecret || !tokenUrl || !destinationName) {
-    console.warn('[Destination Service] Configuration not found in environment variables');
+    console.warn('[Destination Service] Configuration not found in environment variables or VCAP_SERVICES');
     console.warn('[Destination Service] SAP OnPremise integration will be disabled');
     return null;
   }
+
+  console.log('[Destination Service] Loading configuration from environment variables');
 
   // Ensure tokenUrl has /oauth/token suffix
   const normalizedTokenUrl = tokenUrl.endsWith('/oauth/token')

@@ -5,7 +5,10 @@
       "Bash(docker build:*)",
       "Bash(docker push:*)",
       "Bash(kubectl:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(cf push:*)",
+      "Bash(cf env:*)",
+      "Bash(cf logs:*)"
     ],
     "deny": [],
     "ask": []

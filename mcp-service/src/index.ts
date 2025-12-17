@@ -1704,6 +1704,15 @@ app.get("/oauth/authorize", (req: Request, res: Response) => {
   res.redirect(iasUrl);
 });
 
+// GET /oauth/token - Error informativo (OAuth 2.0 requiere POST)
+app.get("/oauth/token", (req: Request, res: Response) => {
+  res.status(405).json({
+    error: "method_not_allowed",
+    error_description: "The token endpoint only accepts POST requests per OAuth 2.0 RFC 6749",
+    allowed_methods: ["POST"]
+  });
+});
+
 // Proxy para token endpoint - Filtra "resource" parameter
 app.post("/oauth/token", async (req: Request, res: Response) => {
   if (!oauthConfig.enabled) {

@@ -36,5 +36,8 @@
     "sql": {
       "native_hana_associations": false
     }
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

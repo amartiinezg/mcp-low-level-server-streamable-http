@@ -6,6 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MCP (Model Context Protocol) server integrated with SAP CAP (Cloud Application Programming Model) demonstrating:
 - MCP server with Low-Level API and Streamable HTTP transport
+- **Multi-Platform Support** - Automatic detection and adaptation for SAP BTP Kyma, Cloud Foundry, and local environments
 - OAuth 2.0 authentication with SAP Identity Authentication Service (IAS)
 - **OAuth Discovery** - RFC 8414 (Authorization Server Metadata) with custom proxy endpoints
 - **OAuth Proxy Endpoints** - Filters RFC 8707 `resource` parameter for SAP IAS compatibility
@@ -23,13 +24,17 @@ MCP (Model Context Protocol) server integrated with SAP CAP (Cloud Application P
 
 ```bash
 npm install          # Install dependencies
-npm run build        # Compile TypeScript to build/ directory
-npm run cap:deploy   # Initialize CAP database (SQLite)
+npm run build        # Compile TypeScript to build/ directory (mcp-service)
+npm run cap:deploy   # Initialize CAP database (SQLite) - cap-service
 npm run start:all    # Start both CAP and MCP servers (recommended)
-npm run cap:start    # Start only CAP server (port 4004)
+npm run cap:start    # Start only CAP server (port 4004) - development
 npm start            # Start only MCP server (port 3001)
 npm run inspector    # Debug with MCP Inspector
 ```
+
+**CAP Service Scripts:**
+- `npm start` (cap-service): Uses dynamic port (for Cloud Foundry)
+- `npm run start:dev` (cap-service): Uses port 4004 (for local development)
 
 **Important:** Always start CAP server before MCP server. Use `npm run start:all` to start both automatically.
 
@@ -112,17 +117,33 @@ Integration with SAP OnPremise systems via BTP Destination Service and Cloud Con
 
 **Architecture Flow:**
 ```
-MCP Server → BTP Destination Service → Connectivity Proxy (kyma-system) → Cloud Connector → SAP OnPremise System
+MCP Server → BTP Destination Service → Connectivity Proxy → Cloud Connector → SAP OnPremise System
 ```
 
-**Important:** The connectivity-proxy is deployed in the `kyma-system` namespace as a Kyma module. Your application code communicates only with the Destination Service API, which internally routes through the connectivity-proxy.
+**Platform-Specific Connectivity:**
+- **Kyma**: Connectivity proxy runs as pod in `kyma-system` namespace, accessed via cluster DNS
+- **Cloud Foundry**: Connectivity proxy credentials provided via VCAP_SERVICES binding
+- **Local**: Connectivity proxy runs on localhost (for development/testing)
+
+**Important:** The code automatically detects the platform and configures the appropriate connectivity proxy URL. Your application communicates with the Destination Service API, which routes through the connectivity proxy.
 
 **Components:**
+- `platform-detector.ts`: Platform detection and configuration utility
+  - `detectPlatform()`: Auto-detects Kyma, Cloud Foundry, or local environment
+  - `getConnectivityProxyUrl()`: Returns platform-appropriate connectivity proxy URL
+  - `getCloudFoundryServiceCredentials()`: Reads service credentials from VCAP_SERVICES
+  - Enables zero-configuration multi-platform deployment
+
 - `destination-service.ts`: BTP Destination Service client with OAuth 2.0 authentication
   - `DestinationServiceClient`: Manages OAuth tokens and retrieves destination configuration
-  - `loadDestinationServiceConfig()`: Loads configuration from environment variables
+  - `loadDestinationServiceConfig()`: Loads configuration from VCAP_SERVICES (CF) or env vars (Kyma)
   - `getAccessToken()`: OAuth 2.0 Client Credentials flow for BTP authentication
   - `getDestination()`: Retrieves destination configuration including credentials
+
+- `connectivity-service.ts`: BTP Connectivity Service client
+  - `ConnectivityServiceClient`: Manages connectivity tokens for OnPremise access
+  - `loadConnectivityServiceConfig()`: Loads configuration from VCAP_SERVICES (CF) or env vars (Kyma)
+  - Platform-aware token retrieval for Cloud Connector routing
 
 - `business-partner-client.ts`: SAP Business Partner API client (used for connectivity validation)
   - `BusinessPartnerClient`: Validates connectivity to SAP OnPremise systems
@@ -475,6 +496,79 @@ kubectl --kubeconfig=".kubeconfig.yaml" wait --for=condition=ready pod -l app=mc
 ```
 
 **Never use kubectl without the --kubeconfig flag in this project.**
+
+## Cloud Foundry Deployment
+
+The project supports deployment to both **SAP BTP Kyma** and **SAP BTP Cloud Foundry** runtimes with automatic platform detection.
+
+### Platform Detection
+
+The code automatically detects the runtime environment and adapts:
+
+- **Kyma**: Detects `KUBERNETES_SERVICE_HOST` environment variable
+  - Reads configuration from environment variables (ConfigMaps/Secrets)
+  - Uses Kyma-specific connectivity proxy: `connectivity-proxy.kyma-system.svc.cluster.local:20003`
+  - Deploys using `kubectl apply -f k8s/`
+
+- **Cloud Foundry**: Detects `VCAP_SERVICES` environment variable
+  - Reads configuration from VCAP_SERVICES (automatic service bindings)
+  - Uses CF connectivity proxy from bound service credentials
+  - Deploys using `cf push`
+
+- **Local**: Falls back when neither Kyma nor CF detected
+  - Reads from environment variables (.env file)
+  - Uses localhost connectivity proxy
+
+**No code changes needed** - the platform is detected at runtime via `platform-detector.ts`.
+
+### Cloud Foundry Prerequisites
+
+1. **CF CLI installed**: `cf --version`
+2. **BTP Services created**:
+   - Destination Service: `cf create-service destination lite mcp-destination-service`
+   - Connectivity Service: `cf create-service connectivity lite mcp-connectivity-service`
+3. **Destination configured** in BTP Cockpit with OnPremise proxy type
+4. **manifest.yml files** configured with correct IAS URLs and service bindings
+
+### Deployment Commands
+
+```bash
+# Login to Cloud Foundry
+cf login -a https://api.cf.eu10-005.hana.ondemand.com
+
+# Build applications
+cd mcp-service && npm run build
+cd ../cap-service && npm install
+
+# Deploy CAP Service first
+cd cap-service
+cf push
+
+# Deploy MCP Service
+cd ../mcp-service
+cf push
+```
+
+### Key Differences: Kyma vs Cloud Foundry
+
+| Aspect | Kyma | Cloud Foundry |
+|--------|------|---------------|
+| **Deployment** | `kubectl apply -f k8s/` | `cf push` |
+| **Config** | ConfigMaps + Secrets | manifest.yml + VCAP_SERVICES |
+| **Service Bindings** | Manual (env vars) | Automatic (VCAP_SERVICES) |
+| **Connectivity Proxy** | Pod in kyma-system | Service with credentials |
+| **Build** | Docker build + push | Buildpack automatic |
+
+### Files
+
+- `mcp-service/manifest.yml`: MCP Service deployment config
+- `cap-service/manifest.yml`: CAP Service deployment config
+- `mcp-service/.cfignore`: Files to exclude from CF deployment
+- `cap-service/.cfignore`: Files to exclude from CF deployment
+- `mcp-service/src/sap-onpremise/platform-detector.ts`: Platform detection utility
+- `docs/CLOUD-FOUNDRY-DEPLOYMENT.md`: Comprehensive CF deployment guide
+
+**See [docs/CLOUD-FOUNDRY-DEPLOYMENT.md](docs/CLOUD-FOUNDRY-DEPLOYMENT.md) for complete Cloud Foundry deployment instructions.**
 
 ## MCP Client Configuration
 

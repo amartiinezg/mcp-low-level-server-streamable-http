@@ -1,0 +1,24 @@
+---
+applications:
+  - name: cap-service
+    memory: 256M
+    instances: 1
+    buildpacks:
+      - nodejs_buildpack
+    command: cds-serve
+    health-check-type: http
+    health-check-http-endpoint: /health
+    timeout: 180
+    env:
+      NODE_ENV: production
+      # IAS Configuration (OAuth 2.0)
+      IAS_ENABLED: true
+      IAS_ISSUER: https://ab9hwzm3p.trial-accounts.ondemand.com
+      IAS_JWKS_URI: https://ab9hwzm3p.trial-accounts.ondemand.com/oauth2/certs
+      IAS_AUDIENCE: 010c907f-befa-4938-83f1-e2a201d57dd0
+    # services:
+      # Optional: Bind HANA or PostgreSQL for production
+      # - cap-db-service
+    routes:
+      - route: cap-service.cfapps.eu10-005.hana.ondemand.com
+

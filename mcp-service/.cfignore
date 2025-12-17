@@ -1,0 +1,47 @@
+# Node modules
+node_modules/
+
+# Development files (we need build/ for Cloud Foundry!)
+# build/ - DO NOT EXCLUDE - Cloud Foundry needs compiled code
+src/
+tsconfig.json
+
+# Environment files (use manifest.yml or cf set-env instead)
+.env
+.env.*
+
+# Git files
+.git/
+.gitignore
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker files (not needed in Cloud Foundry)
+Dockerfile
+.dockerignore
+
+# Kubernetes files (not needed in Cloud Foundry)
+k8s/
+.kubeconfig.yaml
+
+# Test files
+*.test.ts
+*.test.js
+test/
+tests/
+
+# Documentation
+*.md
+docs/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db

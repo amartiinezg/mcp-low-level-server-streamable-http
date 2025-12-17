@@ -8,6 +8,7 @@ import { HttpProxyAgent } from 'http-proxy-agent';
 import type { DestinationConfiguration } from './types.js';
 import { DestinationServiceClient } from './destination-service.js';
 import { ConnectivityServiceClient } from './connectivity-service.js';
+import { getConnectivityProxyUrl, getCloudFoundrySubaccountId } from './platform-detector.js';
 
 export interface ODataV2QueryOptions {
   /** Entity set name (e.g., "A_BusinessPartner") */
@@ -63,8 +64,8 @@ export class ODataV2Client {
     this.destinationClient = destinationClient;
     this.connectivityClient = connectivityClient;
     this.baseServicePath = baseServicePath;
-    this.connectivityProxyUrl = process.env.CONNECTIVITY_PROXY_URL ||
-      'http://connectivity-proxy.kyma-system.svc.cluster.local:20003';
+    // Auto-detect connectivity proxy URL based on platform (Kyma vs Cloud Foundry)
+    this.connectivityProxyUrl = getConnectivityProxyUrl();
 
     this.httpClient = axios.create({
       timeout: 60000,
@@ -166,8 +167,25 @@ export class ODataV2Client {
       if (config.ProxyType === 'OnPremise' && this.connectivityClient) {
         const connectivityToken = await this.connectivityClient.getConnectivityToken();
         headers['Proxy-Authorization'] = `Bearer ${connectivityToken}`;
-        axiosConfig.proxy = false;
-        axiosConfig.httpAgent = new HttpProxyAgent(this.connectivityProxyUrl);
+
+        // NOTE: SAP-Connectivity-ConsumerAccount NO es necesario en Cloud Foundry
+        // El connectivity service binding ya identifica automáticamente el subaccount
+        // Este header solo es necesario en Kyma o cuando usas principal propagation
+
+        // Add SAP-Connectivity-SCC-Location_ID if specified (for Cloud Connector with location ID)
+        const locationId = process.env.CLOUD_CONNECTOR_LOCATION_ID;
+        if (locationId) {
+          headers['SAP-Connectivity-SCC-Location_ID'] = locationId;
+          console.log(`[OData V2 Client] Using Cloud Connector Location ID: ${locationId}`);
+        }
+
+        // Configure HTTP proxy usando la configuración nativa de axios
+        const proxyUrl = new URL(this.connectivityProxyUrl);
+        axiosConfig.proxy = {
+          host: proxyUrl.hostname,
+          port: parseInt(proxyUrl.port) || 20003,
+          protocol: proxyUrl.protocol.replace(':', '')
+        };
       }
 
       const response = await this.httpClient.get<ODataV2Response<T>>(requestUrl, axiosConfig);
@@ -249,8 +267,25 @@ export class ODataV2Client {
       if (config.ProxyType === 'OnPremise' && this.connectivityClient) {
         const connectivityToken = await this.connectivityClient.getConnectivityToken();
         headers['Proxy-Authorization'] = `Bearer ${connectivityToken}`;
-        axiosConfig.proxy = false;
-        axiosConfig.httpAgent = new HttpProxyAgent(this.connectivityProxyUrl);
+
+        // NOTE: SAP-Connectivity-ConsumerAccount NO es necesario en Cloud Foundry
+        // El connectivity service binding ya identifica automáticamente el subaccount
+        // Este header solo es necesario en Kyma o cuando usas principal propagation
+
+        // Add SAP-Connectivity-SCC-Location_ID if specified (for Cloud Connector with location ID)
+        const locationId = process.env.CLOUD_CONNECTOR_LOCATION_ID;
+        if (locationId) {
+          headers['SAP-Connectivity-SCC-Location_ID'] = locationId;
+          console.log(`[OData V2 Client] Using Cloud Connector Location ID: ${locationId}`);
+        }
+
+        // Configure HTTP proxy usando la configuración nativa de axios
+        const proxyUrl = new URL(this.connectivityProxyUrl);
+        axiosConfig.proxy = {
+          host: proxyUrl.hostname,
+          port: parseInt(proxyUrl.port) || 20003,
+          protocol: proxyUrl.protocol.replace(':', '')
+        };
       }
 
       const response = await this.httpClient.get<T>(requestUrl, axiosConfig);

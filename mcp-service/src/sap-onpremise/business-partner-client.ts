@@ -12,6 +12,7 @@ import type {
 } from './types.js';
 import { DestinationServiceClient } from './destination-service.js';
 import { ConnectivityServiceClient } from './connectivity-service.js';
+import { getConnectivityProxyUrl, getCloudFoundrySubaccountId } from './platform-detector.js';
 
 export class BusinessPartnerClient {
   private destinationClient: DestinationServiceClient;
@@ -26,8 +27,8 @@ export class BusinessPartnerClient {
   ) {
     this.destinationClient = destinationClient;
     this.connectivityClient = connectivityClient;
-    this.connectivityProxyUrl = process.env.CONNECTIVITY_PROXY_URL ||
-      'http://connectivity-proxy.kyma-system.svc.cluster.local:20003';
+    // Auto-detect connectivity proxy URL based on platform (Kyma vs Cloud Foundry)
+    this.connectivityProxyUrl = getConnectivityProxyUrl();
 
     this.httpClient = axios.create({
       timeout: 60000, // 60 seconds for OnPremise connections
@@ -265,14 +266,28 @@ export class BusinessPartnerClient {
         // Get connectivity token
         const connectivityToken = await this.connectivityClient.getConnectivityToken();
 
-        // Only add Proxy-Authorization header (not SAP-Connectivity-Authentication)
-        // SAP-Connectivity-Authentication is for principal propagation which requires user tokens
-        // Since we're using BasicAuthentication in the destination, we don't need it
+        // Add Proxy-Authorization header with connectivity token
         headers['Proxy-Authorization'] = `Bearer ${connectivityToken}`;
 
-        // Configure HTTP proxy (connectivity-proxy handles the secure tunnel)
-        axiosConfig.proxy = false;
-        axiosConfig.httpAgent = new HttpProxyAgent(this.connectivityProxyUrl);
+        // NOTE: SAP-Connectivity-ConsumerAccount NO es necesario en Cloud Foundry
+        // El connectivity service binding ya identifica automáticamente el subaccount
+        // Este header solo es necesario en Kyma o cuando usas principal propagation
+
+        // Add SAP-Connectivity-SCC-Location_ID if specified (for Cloud Connector with location ID)
+        const locationId = process.env.CLOUD_CONNECTOR_LOCATION_ID;
+        if (locationId) {
+          headers['SAP-Connectivity-SCC-Location_ID'] = locationId;
+          console.log(`[Business Partner] Using Cloud Connector Location ID: ${locationId}`);
+        }
+
+        // Configure HTTP proxy usando la configuración nativa de axios
+        // Extraer host y port del connectivity proxy URL
+        const proxyUrl = new URL(this.connectivityProxyUrl);
+        axiosConfig.proxy = {
+          host: proxyUrl.hostname,
+          port: parseInt(proxyUrl.port) || 20003,
+          protocol: proxyUrl.protocol.replace(':', '')
+        };
 
         console.log('[Business Partner] Connectivity proxy configured');
       }
@@ -291,9 +306,18 @@ export class BusinessPartnerClient {
       console.error('❌ [Business Partner] Connectivity validation failed:', error);
       if (axios.isAxiosError(error)) {
         console.error('URL:', error.config?.url);
-        console.error('Response data:', error.response?.data);
         console.error('Response status:', error.response?.status);
-        console.error('Request headers:', error.config?.headers);
+        console.error('Response data:', error.response?.data);
+        console.error('Response headers:', error.response?.headers);
+
+        // 503 específico del connectivity proxy
+        if (error.response?.status === 503) {
+          console.error('⚠️ 503 Service Unavailable - Posibles causas:');
+          console.error('1. Cloud Connector no está conectado al subaccount de BTP');
+          console.error('2. Virtual host "virtuals12" no está configurado en Cloud Connector');
+          console.error('3. Sistema SAP OnPremise no disponible en virtuals12:44300');
+          console.error('4. Location ID incorrecto (si se usa)');
+        }
       }
       return false;
     }

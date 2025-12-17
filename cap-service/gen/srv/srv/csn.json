@@ -1,0 +1,557 @@
+{
+  "namespace": "cap.mcp.demo",
+  "definitions": {
+    "cap.mcp.demo.Products": {
+      "kind": "entity",
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "name": {
+          "@title": "Nombre del Producto",
+          "type": "cds.String",
+          "length": 100
+        },
+        "description": {
+          "@title": "Descripción",
+          "type": "cds.String",
+          "length": 500
+        },
+        "price": {
+          "@title": "Precio",
+          "type": "cds.Decimal",
+          "precision": 10,
+          "scale": 2
+        },
+        "stock": {
+          "@title": "Stock Disponible",
+          "type": "cds.Integer"
+        },
+        "category": {
+          "@title": "Categoría",
+          "type": "cds.String",
+          "length": 50
+        },
+        "active": {
+          "@title": "Activo",
+          "type": "cds.Boolean",
+          "default": {
+            "val": true
+          }
+        },
+        "createdAt": {
+          "@cds.on.insert": {
+            "=": "$now"
+          },
+          "type": "cds.Timestamp"
+        },
+        "modifiedAt": {
+          "@cds.on.insert": {
+            "=": "$now"
+          },
+          "@cds.on.update": {
+            "=": "$now"
+          },
+          "type": "cds.Timestamp"
+        }
+      }
+    },
+    "cap.mcp.demo.Orders": {
+      "kind": "entity",
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "orderNumber": {
+          "@title": "Número de Orden",
+          "type": "cds.String",
+          "length": 20
+        },
+        "customerName": {
+          "@title": "Nombre del Cliente",
+          "type": "cds.String",
+          "length": 100
+        },
+        "totalAmount": {
+          "@title": "Monto Total",
+          "type": "cds.Decimal",
+          "precision": 10,
+          "scale": 2
+        },
+        "status": {
+          "@title": "Estado",
+          "type": "cds.String",
+          "length": 20,
+          "default": {
+            "val": "PENDING"
+          }
+        },
+        "orderDate": {
+          "@title": "Fecha de Orden",
+          "@cds.on.insert": {
+            "=": "$now"
+          },
+          "type": "cds.DateTime"
+        },
+        "items": {
+          "type": "cds.Composition",
+          "cardinality": {
+            "max": "*"
+          },
+          "target": "cap.mcp.demo.OrderItems",
+          "on": [
+            {
+              "ref": [
+                "items",
+                "order"
+              ]
+            },
+            "=",
+            {
+              "ref": [
+                "$self"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "cap.mcp.demo.OrderItems": {
+      "kind": "entity",
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "order": {
+          "type": "cds.Association",
+          "target": "cap.mcp.demo.Orders",
+          "keys": [
+            {
+              "ref": [
+                "ID"
+              ]
+            }
+          ]
+        },
+        "product": {
+          "type": "cds.Association",
+          "target": "cap.mcp.demo.Products",
+          "keys": [
+            {
+              "ref": [
+                "ID"
+              ]
+            }
+          ]
+        },
+        "quantity": {
+          "@title": "Cantidad",
+          "type": "cds.Integer"
+        },
+        "unitPrice": {
+          "@title": "Precio Unitario",
+          "type": "cds.Decimal",
+          "precision": 10,
+          "scale": 2
+        },
+        "subtotal": {
+          "@title": "Subtotal",
+          "type": "cds.Decimal",
+          "precision": 10,
+          "scale": 2
+        }
+      }
+    },
+    "cap.mcp.demo.Customers": {
+      "kind": "entity",
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "name": {
+          "@title": "Nombre",
+          "type": "cds.String",
+          "length": 100
+        },
+        "email": {
+          "@title": "Email",
+          "type": "cds.String",
+          "length": 100
+        },
+        "phone": {
+          "@title": "Teléfono",
+          "type": "cds.String",
+          "length": 20
+        },
+        "address": {
+          "@title": "Dirección",
+          "type": "cds.String",
+          "length": 200
+        },
+        "active": {
+          "@title": "Activo",
+          "type": "cds.Boolean",
+          "default": {
+            "val": true
+          }
+        },
+        "createdAt": {
+          "@cds.on.insert": {
+            "=": "$now"
+          },
+          "type": "cds.Timestamp"
+        }
+      }
+    },
+    "CatalogService": {
+      "@source": "srv/catalog-service.cds",
+      "kind": "service"
+    },
+    "CatalogService.Products": {
+      "kind": "entity",
+      "projection": {
+        "from": {
+          "ref": [
+            "cap.mcp.demo.Products"
+          ]
+        }
+      },
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "name": {
+          "@title": "Nombre del Producto",
+          "type": "cds.String",
+          "length": 100
+        },
+        "description": {
+          "@title": "Descripción",
+          "type": "cds.String",
+          "length": 500
+        },
+        "price": {
+          "@title": "Precio",
+          "type": "cds.Decimal",
+          "precision": 10,
+          "scale": 2
+        },
+        "stock": {
+          "@title": "Stock Disponible",
+          "type": "cds.Integer"
+        },
+        "category": {
+          "@title": "Categoría",
+          "type": "cds.String",
+          "length": 50
+        },
+        "active": {
+          "@title": "Activo",
+          "type": "cds.Boolean",
+          "default": {
+            "val": true
+          }
+        },
+        "createdAt": {
+          "@cds.on.insert": {
+            "=": "$now"
+          },
+          "type": "cds.Timestamp"
+        },
+        "modifiedAt": {
+          "@cds.on.insert": {
+            "=": "$now"
+          },
+          "@cds.on.update": {
+            "=": "$now"
+          },
+          "type": "cds.Timestamp"
+        }
+      }
+    },
+    "CatalogService.Orders": {
+      "kind": "entity",
+      "projection": {
+        "from": {
+          "ref": [
+            "cap.mcp.demo.Orders"
+          ]
+        }
+      },
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "orderNumber": {
+          "@title": "Número de Orden",
+          "type": "cds.String",
+          "length": 20
+        },
+        "customerName": {
+          "@title": "Nombre del Cliente",
+          "type": "cds.String",
+          "length": 100
+        },
+        "totalAmount": {
+          "@title": "Monto Total",
+          "type": "cds.Decimal",
+          "precision": 10,
+          "scale": 2
+        },
+        "status": {
+          "@title": "Estado",
+          "type": "cds.String",
+          "length": 20,
+          "default": {
+            "val": "PENDING"
+          }
+        },
+        "orderDate": {
+          "@title": "Fecha de Orden",
+          "@cds.on.insert": {
+            "=": "$now"
+          },
+          "type": "cds.DateTime"
+        },
+        "items": {
+          "type": "cds.Composition",
+          "cardinality": {
+            "max": "*"
+          },
+          "target": "CatalogService.OrderItems",
+          "on": [
+            {
+              "ref": [
+                "items",
+                "order"
+              ]
+            },
+            "=",
+            {
+              "ref": [
+                "$self"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "CatalogService.OrderItems": {
+      "kind": "entity",
+      "projection": {
+        "from": {
+          "ref": [
+            "cap.mcp.demo.OrderItems"
+          ]
+        }
+      },
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "order": {
+          "type": "cds.Association",
+          "target": "CatalogService.Orders",
+          "keys": [
+            {
+              "ref": [
+                "ID"
+              ]
+            }
+          ]
+        },
+        "product": {
+          "type": "cds.Association",
+          "target": "CatalogService.Products",
+          "keys": [
+            {
+              "ref": [
+                "ID"
+              ]
+            }
+          ]
+        },
+        "quantity": {
+          "@title": "Cantidad",
+          "type": "cds.Integer"
+        },
+        "unitPrice": {
+          "@title": "Precio Unitario",
+          "type": "cds.Decimal",
+          "precision": 10,
+          "scale": 2
+        },
+        "subtotal": {
+          "@title": "Subtotal",
+          "type": "cds.Decimal",
+          "precision": 10,
+          "scale": 2
+        }
+      }
+    },
+    "CatalogService.Customers": {
+      "kind": "entity",
+      "projection": {
+        "from": {
+          "ref": [
+            "cap.mcp.demo.Customers"
+          ]
+        }
+      },
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "name": {
+          "@title": "Nombre",
+          "type": "cds.String",
+          "length": 100
+        },
+        "email": {
+          "@title": "Email",
+          "type": "cds.String",
+          "length": 100
+        },
+        "phone": {
+          "@title": "Teléfono",
+          "type": "cds.String",
+          "length": 20
+        },
+        "address": {
+          "@title": "Dirección",
+          "type": "cds.String",
+          "length": 200
+        },
+        "active": {
+          "@title": "Activo",
+          "type": "cds.Boolean",
+          "default": {
+            "val": true
+          }
+        },
+        "createdAt": {
+          "@cds.on.insert": {
+            "=": "$now"
+          },
+          "type": "cds.Timestamp"
+        }
+      }
+    },
+    "CatalogService.createCompleteOrder": {
+      "kind": "action",
+      "params": {
+        "customerName": {
+          "type": "cds.String"
+        },
+        "items": {
+          "items": {
+            "elements": {
+              "productId": {
+                "type": "cds.UUID"
+              },
+              "quantity": {
+                "type": "cds.Integer"
+              }
+            }
+          }
+        }
+      },
+      "returns": {
+        "elements": {
+          "orderId": {
+            "type": "cds.UUID"
+          },
+          "orderNumber": {
+            "type": "cds.String"
+          },
+          "totalAmount": {
+            "type": "cds.Decimal"
+          }
+        }
+      }
+    },
+    "CatalogService.getLowStockProducts": {
+      "kind": "function",
+      "params": {
+        "threshold": {
+          "type": "cds.Integer"
+        }
+      },
+      "returns": {
+        "items": {
+          "type": "CatalogService.Products"
+        }
+      }
+    },
+    "CatalogService.updateOrderStatus": {
+      "kind": "action",
+      "params": {
+        "orderId": {
+          "type": "cds.UUID"
+        },
+        "newStatus": {
+          "type": "cds.String"
+        }
+      },
+      "returns": {
+        "type": "CatalogService.Orders"
+      }
+    },
+    "cds.outbox.Messages": {
+      "kind": "entity",
+      "elements": {
+        "ID": {
+          "key": true,
+          "type": "cds.UUID"
+        },
+        "timestamp": {
+          "type": "cds.Timestamp"
+        },
+        "target": {
+          "type": "cds.String"
+        },
+        "msg": {
+          "type": "cds.LargeString"
+        },
+        "attempts": {
+          "type": "cds.Integer",
+          "default": {
+            "val": 0
+          }
+        },
+        "partition": {
+          "type": "cds.Integer",
+          "default": {
+            "val": 0
+          }
+        },
+        "lastError": {
+          "type": "cds.LargeString"
+        },
+        "lastAttemptTimestamp": {
+          "@cds.on.update": {
+            "=": "$now"
+          },
+          "type": "cds.Timestamp"
+        },
+        "status": {
+          "type": "cds.String",
+          "length": 23
+        }
+      }
+    }
+  },
+  "meta": {
+    "creator": "CDS Compiler v6.4.2",
+    "flavor": "inferred"
+  },
+  "$version": "2.0"
+}

@@ -1,10 +1,12 @@
 /**
  * SAP BTP Connectivity Service Client
  * Handles authentication and token generation for connectivity-proxy
+ * Supports both Kyma and Cloud Foundry environments
  */
 
 import axios, { AxiosInstance } from 'axios';
 import type { OAuthTokenResponse } from './types.js';
+import { detectPlatform, getCloudFoundryServiceCredentials } from './platform-detector.js';
 
 export interface ConnectivityServiceConfig {
   clientId: string;
@@ -37,6 +39,8 @@ export class ConnectivityServiceClient {
 
     try {
       console.log('[Connectivity Service] Fetching connectivity token...');
+      console.log('[Connectivity Service] Token URL:', this.config.tokenUrl);
+      console.log('[Connectivity Service] Client ID:', this.config.clientId?.substring(0, 10) + '...');
 
       const params = new URLSearchParams();
       params.append('grant_type', 'client_credentials');
@@ -74,17 +78,48 @@ export class ConnectivityServiceClient {
 
 /**
  * Load Connectivity Service configuration from environment variables
+ * Supports both Kyma (env vars) and Cloud Foundry (VCAP_SERVICES)
  */
 export function loadConnectivityServiceConfig(): ConnectivityServiceConfig | null {
+  const platform = detectPlatform();
+
+  console.log(`[Connectivity Service] Detected platform: ${platform}`);
+
+  // Try Cloud Foundry VCAP_SERVICES first
+  if (platform === 'cloudfoundry') {
+    const credentials = getCloudFoundryServiceCredentials('connectivity');
+    if (credentials) {
+      console.log('[Connectivity Service] Loading configuration from VCAP_SERVICES');
+
+      // Get token URL from credentials
+      let tokenUrl = credentials.token_service_url || credentials.url;
+
+      // Ensure tokenUrl has /oauth/token suffix
+      if (!tokenUrl.endsWith('/oauth/token')) {
+        tokenUrl = `${tokenUrl}/oauth/token`;
+      }
+
+      return {
+        clientId: credentials.clientid,
+        clientSecret: credentials.clientsecret,
+        tokenUrl: tokenUrl,
+        connectivityServiceUrl: credentials.url,
+      };
+    }
+  }
+
+  // Fallback to environment variables (Kyma or local)
   const clientId = process.env.CONNECTIVITY_CLIENT_ID;
   const clientSecret = process.env.CONNECTIVITY_CLIENT_SECRET;
   const tokenUrl = process.env.CONNECTIVITY_TOKEN_URL;
   const connectivityServiceUrl = process.env.CONNECTIVITY_SERVICE_URL;
 
   if (!clientId || !clientSecret || !tokenUrl || !connectivityServiceUrl) {
-    console.warn('[Connectivity Service] Configuration not found in environment variables');
+    console.warn('[Connectivity Service] Configuration not found in environment variables or VCAP_SERVICES');
     return null;
   }
+
+  console.log('[Connectivity Service] Loading configuration from environment variables');
 
   // Ensure tokenUrl has /oauth/token suffix
   const normalizedTokenUrl = tokenUrl.endsWith('/oauth/token')
