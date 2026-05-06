@@ -12,6 +12,17 @@ export interface DestinationServiceConfig {
   clientSecret: string;
   tokenUrl: string;
   destinationName: string;
+  /**
+   * Local-direct mode: bypass BTP Destination Service and call SAP directly.
+   * Activated by env var LOCAL_SAP_DIRECT=true (corporate network / VPN access).
+   */
+  localDirect?: {
+    sapUrl: string;
+    user?: string;
+    password?: string;
+    sapClient?: string;
+    authentication?: 'BasicAuthentication' | 'NoAuthentication';
+  };
 }
 
 /**

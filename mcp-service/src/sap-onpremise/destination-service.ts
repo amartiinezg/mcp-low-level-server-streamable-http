@@ -27,6 +27,38 @@ export class DestinationServiceClient {
   }
 
   /**
+   * True when running in LOCAL_SAP_DIRECT mode (no BTP).
+   */
+  private isLocalDirect(): boolean {
+    return !!this.config.localDirect;
+  }
+
+  /**
+   * Build a synthetic destination response for LOCAL_SAP_DIRECT mode.
+   * No BTP HTTP calls; SAP is reached directly over corporate network.
+   */
+  private buildLocalDirectDestination(): DestinationServiceResponse {
+    const ld = this.config.localDirect!;
+    const auth = ld.authentication || (ld.user && ld.password ? 'BasicAuthentication' : 'NoAuthentication');
+    const destinationConfiguration: DestinationConfiguration = {
+      Name: this.config.destinationName,
+      Type: 'HTTP',
+      URL: ld.sapUrl.replace(/\/+$/, ''),
+      Authentication: auth,
+      ProxyType: 'Internet', // Skips connectivity-proxy / Cloud Connector path
+      User: ld.user,
+      Password: ld.password,
+    };
+    if (ld.sapClient) {
+      destinationConfiguration['sap-client'] = ld.sapClient;
+    }
+    return {
+      owner: { SubaccountId: 'local', InstanceId: null },
+      destinationConfiguration,
+    };
+  }
+
+  /**
    * Get OAuth2 access token using client credentials flow
    */
   private async getAccessToken(): Promise<string> {
@@ -75,6 +107,12 @@ export class DestinationServiceClient {
    * Get destination configuration from Destination Service
    */
   async getDestination(): Promise<DestinationServiceResponse> {
+    // LOCAL_SAP_DIRECT mode: skip BTP, return synthetic destination
+    if (this.isLocalDirect()) {
+      console.log('[Destination Service] LOCAL_SAP_DIRECT mode - bypassing BTP');
+      return this.buildLocalDirectDestination();
+    }
+
     try {
       const token = await this.getAccessToken();
 
@@ -118,6 +156,36 @@ export class DestinationServiceClient {
  * Supports both Kyma (env vars) and Cloud Foundry (VCAP_SERVICES)
  */
 export function loadDestinationServiceConfig(): DestinationServiceConfig | null {
+  // ─── LOCAL_SAP_DIRECT mode: bypass BTP entirely ───────────────────────────
+  // Use when running locally on the same corporate network as the SAP system.
+  // Required env: LOCAL_SAP_DIRECT=true, LOCAL_SAP_URL=https://sap.host:port
+  // Optional:    LOCAL_SAP_USER, LOCAL_SAP_PASSWORD, LOCAL_SAP_CLIENT
+  if (process.env.LOCAL_SAP_DIRECT === 'true') {
+    const sapUrl = process.env.LOCAL_SAP_URL;
+    if (!sapUrl) {
+      console.warn('[Destination Service] LOCAL_SAP_DIRECT=true but LOCAL_SAP_URL is missing - SAP integration disabled');
+      return null;
+    }
+    console.log('[Destination Service] LOCAL_SAP_DIRECT enabled - calling SAP directly, no BTP');
+    console.log(`[Destination Service] SAP URL: ${sapUrl}`);
+    return {
+      url: '',
+      clientId: '',
+      clientSecret: '',
+      tokenUrl: '',
+      destinationName: process.env.BTP_DESTINATION_NAME || 'LOCAL_DIRECT',
+      localDirect: {
+        sapUrl,
+        user: process.env.LOCAL_SAP_USER,
+        password: process.env.LOCAL_SAP_PASSWORD,
+        sapClient: process.env.LOCAL_SAP_CLIENT,
+        authentication: process.env.LOCAL_SAP_USER && process.env.LOCAL_SAP_PASSWORD
+          ? 'BasicAuthentication'
+          : 'NoAuthentication',
+      },
+    };
+  }
+
   const platform = detectPlatform();
 
   console.log(`[Destination Service] Detected platform: ${platform}`);

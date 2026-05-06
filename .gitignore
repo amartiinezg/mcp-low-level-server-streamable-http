@@ -1,2 +1,26 @@
 /docs
 .gemini
+
+# Local Claude settings
+.claude/settings.local.json
+.claude/worktrees/
+
+# Distribution artifacts
+*.zip
+
+# Working / intermediate cert files (root-level scratch)
+# Note: mcp-service/certs/ IS committed — that's the distribution bundle
+/certs/
+
+# Local kube config (do NOT commit credentials)
+.kubeconfig.yaml
+
+# Env files (creds)
+.env
+mcp-service/.env
+cap-service/.env
+
+# Node
+node_modules/
+*.log
+*.sqlite

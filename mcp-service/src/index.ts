@@ -21,6 +21,38 @@ if (process.env.NODE_ENV !== 'production') {
   dotenv.config();
 }
 
+// Inyectar CA corporativa al agente HTTPS global (post-dotenv).
+// Necesario cuando NODE_EXTRA_CA_CERTS no se puede pre-setear (lo lee Node al startup).
+import https from 'https';
+import { readFileSync, existsSync } from 'fs';
+import path from 'path';
+import { rootCertificates } from 'tls';
+
+function resolveCABundle(): string | null {
+  const explicit = process.env.SAP_CA_BUNDLE || process.env.NODE_EXTRA_CA_CERTS;
+  // Si el usuario fija una ruta, respeta absoluta o resuelve relativa al cwd.
+  if (explicit) {
+    return path.isAbsolute(explicit) ? explicit : path.resolve(process.cwd(), explicit);
+  }
+  // Auto-discovery: bundle empaquetado junto al servicio.
+  const candidates = [
+    path.resolve(process.cwd(), 'certs/convista-ca-bundle.pem'),
+    path.resolve(process.cwd(), '../certs/convista-ca-bundle.pem'),
+  ];
+  return candidates.find(p => existsSync(p)) || null;
+}
+
+const extraCAPath = resolveCABundle();
+if (extraCAPath) {
+  try {
+    const extraCA = readFileSync(extraCAPath, 'utf-8');
+    https.globalAgent.options.ca = [...rootCertificates, extraCA];
+    console.log(`🔐 [TLS] Extra CA bundle cargado: ${extraCAPath}`);
+  } catch (e) {
+    console.warn(`⚠️  [TLS] No se pudo cargar CA bundle '${extraCAPath}':`, (e as Error).message);
+  }
+}
+
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
