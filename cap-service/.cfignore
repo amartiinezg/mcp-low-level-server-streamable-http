@@ -1,0 +1,51 @@
+# Node modules
+node_modules/
+
+# Development files
+.cdsrc.json
+
+# Environment files (use manifest.yml or cf set-env instead)
+.env
+.env.*
+
+# Git files
+.git/
+.gitignore
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker files (not needed in Cloud Foundry)
+Dockerfile
+.dockerignore
+
+# Kubernetes files (not needed in Cloud Foundry)
+k8s/
+
+# Test files
+*.test.ts
+*.test.js
+test/
+tests/
+
+# Documentation
+*.md
+docs/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Database (might be regenerated or use bound service)
+*.db
+db.sqlite
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Generated files
+gen/

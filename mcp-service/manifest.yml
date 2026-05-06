@@ -1,0 +1,30 @@
+---
+applications:
+  - name: mcp-service
+    memory: 512M
+    instances: 1
+    buildpacks:
+      - nodejs_buildpack
+    command: node build/index.js
+    health-check-type: http
+    health-check-http-endpoint: /health
+    timeout: 180
+    env:
+      NODE_ENV: production
+      # Public URL for OAuth endpoints (CRÍTICO para Cloud Foundry)
+      PUBLIC_URL: https://mcp-service.cfapps.eu10-005.hana.ondemand.com
+      # IAS Configuration (OAuth 2.0)
+      IAS_ENABLED: true
+      IAS_ISSUER: https://ab9hwzm3p.trial-accounts.ondemand.com
+      IAS_JWKS_URI: https://ab9hwzm3p.trial-accounts.ondemand.com/oauth2/certs
+      IAS_AUDIENCE: 010c907f-befa-4938-83f1-e2a201d57dd0
+      IAS_CLIENT_ID: 010c907f-befa-4938-83f1-e2a201d57dd0
+      # CAP Service URL (dentro de Cloud Foundry)
+      CAP_SERVICE_URL: https://cap-service.cfapps.eu10-005.hana.ondemand.com
+    services:
+      # BTP Destination Service
+      - mcp-destination-service
+      # BTP Connectivity Service (Cloud Foundry tiene arquitectura diferente)
+      - mcp-connectivity-service
+    routes:
+      - route: mcp-service.cfapps.eu10-005.hana.ondemand.com

@@ -4,13 +4,13 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Copiar archivos de configuración
-COPY package*.json tsconfig.json ./
+COPY mcp-service/package*.json mcp-service/tsconfig.json ./
 
 # Instalar dependencias
 RUN npm ci
 
 # Copiar código fuente
-COPY src ./src
+COPY mcp-service/src ./src
 
 # Compilar TypeScript
 RUN npm run build
@@ -23,7 +23,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Copiar archivos de configuración
-COPY package*.json ./
+COPY mcp-service/package*.json ./
 
 # Instalar solo dependencias de producción
 RUN npm ci --omit=dev

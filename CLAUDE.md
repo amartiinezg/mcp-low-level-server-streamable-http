@@ -6,11 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 MCP (Model Context Protocol) server integrated with SAP CAP (Cloud Application Programming Model) demonstrating:
 - MCP server with Low-Level API and Streamable HTTP transport
+- **Multi-Platform Support** - Automatic detection and adaptation for SAP BTP Kyma, Cloud Foundry, and local environments
 - OAuth 2.0 authentication with SAP Identity Authentication Service (IAS)
 - **OAuth Discovery** - RFC 8414 (Authorization Server Metadata) with custom proxy endpoints
 - **OAuth Proxy Endpoints** - Filters RFC 8707 `resource` parameter for SAP IAS compatibility
 - CAP OData service for e-commerce catalog management
 - 4 MCP tools to interact with CAP OData endpoints
+- **SAP OnPremise Integration** - Business Partner API via BTP Destination Service and Cloud Connector
+- **Generic OData V2 Client** - Flexible query tool for any SAP OData V2 service
+- **Automatic Schema Discovery** - Parses and exposes OData V2 $metadata as MCP resource
+- 2 MCP tools for SAP OData operations (generic query + schema info)
 - Note-taking system (original MCP demo)
 - JWT token validation using JWKS (JSON Web Key Set)
 - Combined authentication (JWT Bearer token + OAuth session cookies)
@@ -19,13 +24,17 @@ MCP (Model Context Protocol) server integrated with SAP CAP (Cloud Application P
 
 ```bash
 npm install          # Install dependencies
-npm run build        # Compile TypeScript to build/ directory
-npm run cap:deploy   # Initialize CAP database (SQLite)
+npm run build        # Compile TypeScript to build/ directory (mcp-service)
+npm run cap:deploy   # Initialize CAP database (SQLite) - cap-service
 npm run start:all    # Start both CAP and MCP servers (recommended)
-npm run cap:start    # Start only CAP server (port 4004)
+npm run cap:start    # Start only CAP server (port 4004) - development
 npm start            # Start only MCP server (port 3001)
 npm run inspector    # Debug with MCP Inspector
 ```
+
+**CAP Service Scripts:**
+- `npm start` (cap-service): Uses dynamic port (for Cloud Foundry)
+- `npm run start:dev` (cap-service): Uses port 4004 (for local development)
 
 **Important:** Always start CAP server before MCP server. Use `npm run start:all` to start both automatically.
 
@@ -35,15 +44,19 @@ npm run inspector    # Debug with MCP Inspector
 
 The server implements three MCP capability types:
 
-**Resources** - Notes accessible via `note:///` URIs
-- `ListResourcesRequestSchema`: Returns all notes as MCP resources
-- `ReadResourceRequestSchema`: Returns specific note content by ID
+**Resources** - Accessible information via MCP URIs
+- Notes via `note:///` URIs: Individual text notes
+- `sap://businesspartner/schema`: Complete OData V2 schema with entities, properties, and relationships for Business Partner API
+- `ListResourcesRequestSchema`: Returns all available resources
+- `ReadResourceRequestSchema`: Returns specific resource content by URI
 
-**Tools** - Actions invokable by MCP clients (4 total)
+**Tools** - Actions invokable by MCP clients (6 total)
 - `create_note`: Creates notes with title and content (original demo)
 - `cap_list_products`: Lists all products from CAP OData, optionally filtered by low stock
 - `cap_create_order`: Creates purchase order with products and quantities
 - `cap_update_order_status`: Updates order status (PENDING/PROCESSING/SHIPPED/DELIVERED/CANCELLED)
+- `sap_odata_query`: **Generic OData V2 query tool** - Query any EntitySet with flexible filters, select, expand, orderby, pagination
+- `sap_get_schema_info`: Get detailed schema information including entities, properties, keys, and relationships
 
 **Prompts** - Templates for LLM interactions
 - `summarize_notes`: Returns prompt with embedded note resources
@@ -97,6 +110,307 @@ OAuth 2.0 authentication for CAP OData endpoints:
 - `auth-middleware.js`: JWT validation middleware for Express
 - Applies authentication to `/odata/v4/catalog` routes when enabled
 - Uses same JWKS validation as MCP service for consistency
+
+### SAP OnPremise Integration (mcp-service/src/sap-onpremise/)
+
+Integration with SAP OnPremise systems via BTP Destination Service and Cloud Connector:
+
+**Architecture Flow:**
+```
+MCP Server → BTP Destination Service → Connectivity Proxy → Cloud Connector → SAP OnPremise System
+```
+
+**Platform-Specific Connectivity:**
+- **Kyma**: Connectivity proxy runs as pod in `kyma-system` namespace, accessed via cluster DNS
+- **Cloud Foundry**: Connectivity proxy credentials provided via VCAP_SERVICES binding
+- **Local**: Connectivity proxy runs on localhost (for development/testing)
+
+**Important:** The code automatically detects the platform and configures the appropriate connectivity proxy URL. Your application communicates with the Destination Service API, which routes through the connectivity proxy.
+
+**Components:**
+- `platform-detector.ts`: Platform detection and configuration utility
+  - `detectPlatform()`: Auto-detects Kyma, Cloud Foundry, or local environment
+  - `getConnectivityProxyUrl()`: Returns platform-appropriate connectivity proxy URL
+  - `getCloudFoundryServiceCredentials()`: Reads service credentials from VCAP_SERVICES
+  - Enables zero-configuration multi-platform deployment
+
+- `destination-service.ts`: BTP Destination Service client with OAuth 2.0 authentication
+  - `DestinationServiceClient`: Manages OAuth tokens and retrieves destination configuration
+  - `loadDestinationServiceConfig()`: Loads configuration from VCAP_SERVICES (CF) or env vars (Kyma)
+  - `getAccessToken()`: OAuth 2.0 Client Credentials flow for BTP authentication
+  - `getDestination()`: Retrieves destination configuration including credentials
+
+- `connectivity-service.ts`: BTP Connectivity Service client
+  - `ConnectivityServiceClient`: Manages connectivity tokens for OnPremise access
+  - `loadConnectivityServiceConfig()`: Loads configuration from VCAP_SERVICES (CF) or env vars (Kyma)
+  - Platform-aware token retrieval for Cloud Connector routing
+
+- `business-partner-client.ts`: SAP Business Partner API client (used for connectivity validation)
+  - `BusinessPartnerClient`: Validates connectivity to SAP OnPremise systems
+  - `validateConnectivity()`: Tests connection to SAP OnPremise via Cloud Connector
+  - Note: Specific query operations have been replaced by generic `ODataV2Client`
+
+- `odata-v2-client.ts`: **Generic OData V2 query client**
+  - `ODataV2Client`: Flexible query execution for any OData V2 EntitySet
+  - `query(options)`: Execute queries with $filter, $select, $expand, $orderby, $top, $skip, $inlinecount
+  - `queryRaw(path, params)`: Execute custom queries with raw paths (for function imports)
+  - `buildFilter`: Helper methods for building OData V2 filter expressions (eq, ne, gt, substringof, etc.)
+  - `formatResults(results)`: Format query results for display
+  - **Important:** Uses OData V2 syntax (e.g., `substringof('value', property)` instead of V4 `contains(property, 'value')`)
+
+- `odata-v2-metadata-parser.ts`: **OData V2 $metadata parser and schema manager**
+  - `ODataV2MetadataParser`: Parses and caches OData V2 service metadata
+  - `fetchMetadata()`: Fetch and parse $metadata XML, returns structured schema
+  - `getEntityType(name)`: Get specific entity type definition
+  - `getEntitySets()`: Get all available entity sets
+  - `getSchemaInfo()`: Generate human-readable schema summary
+  - `getEntityTypeDetails(name)`: Get detailed info for specific entity type
+  - `clearCache()`: Force metadata refresh
+  - Automatically caches metadata on startup for performance
+
+- `types.ts`: TypeScript interfaces for SAP integration
+  - `DestinationServiceConfig`, `DestinationConfiguration`
+  - `BusinessPartner`, `BusinessPartnerAddress`
+  - `OAuthTokenResponse`, `DestinationServiceResponse`
+  - `ODataProperty`, `ODataNavigationProperty`, `ODataEntityType`
+  - `ODataEntitySet`, `ODataAssociation`, `ODataSchema`
+
+**Configuration Requirements:**
+- `BTP_DESTINATION_SERVICE_URL`: Destination Service URL from BTP service key
+- `BTP_DESTINATION_CLIENT_ID`: OAuth client ID for Destination Service
+- `BTP_DESTINATION_CLIENT_SECRET`: OAuth client secret for Destination Service
+- `BTP_DESTINATION_TOKEN_URL`: OAuth token endpoint URL
+- `BTP_DESTINATION_NAME`: Name of destination configured in BTP Cockpit
+
+**Authentication is optional** - If destination service configuration is not provided, SAP OnPremise tools will not be available.
+
+See [mcp-service/src/sap-onpremise/README.md](mcp-service/src/sap-onpremise/README.md) for complete setup guide.
+
+## SAP OnPremise OData V2 - S/4HANA 2022 Restrictions
+
+This project integrates with **S/4HANA 2022 On-Premise** via OData V2. This version has specific restrictions that differ from newer OData V4 or cloud versions.
+
+### Critical Restrictions
+
+#### 1. ❌ $select + $expand Incompatibility
+
+**Problem**: Combining `$select` on the root entity with `$expand` causes the expand to disappear from the response.
+
+**Example - WRONG**:
+```typescript
+// This will return ONLY selected fields, expand will be ignored
+{
+  entitySet: 'A_BusinessPartner',
+  select: 'BusinessPartner,BusinessPartnerFullName',
+  expand: 'to_BusinessPartnerAddress'
+}
+```
+
+**Solution - CORRECT**:
+```typescript
+// Option 1: Omit $select, get all root fields with expand
+{
+  entitySet: 'A_BusinessPartner',
+  expand: 'to_BusinessPartnerAddress'
+  // Filter fields locally in your code
+}
+
+// Option 2: Make two separate calls
+// Call 1: Get navigation data
+{ entitySet: 'A_BusinessPartner', expand: 'to_BusinessPartnerAddress' }
+// Call 2: Get specific root fields
+{ entitySet: 'A_BusinessPartner', select: 'BusinessPartner,BusinessPartnerFullName' }
+```
+
+#### 2. ❌ $select Inside $expand Not Supported
+
+**Problem**: OData V2 in S/4HANA 2022 doesn't support `$expand=NavigationProperty($select=Field)` syntax.
+
+**Example - WRONG**:
+```typescript
+{
+  entitySet: 'A_BusinessPartner',
+  expand: 'to_BusinessPartnerAddress($select=City,Country)'  // ❌ Syntax error
+}
+```
+
+**Solution - CORRECT**:
+```typescript
+// Option 1: Expand without $select, filter locally
+{
+  entitySet: 'A_BusinessPartner',
+  expand: 'to_BusinessPartnerAddress'
+}
+
+// Option 2: Direct call to navigation EntitySet
+{
+  entitySet: 'A_BusinessPartnerAddress',
+  filter: 'BusinessPartner eq "1000001"',
+  select: 'AddressID,City,Country,StreetName'
+}
+```
+
+#### 3. ❌ $filter with any() Not Supported
+
+**Problem**: Cannot filter on navigation properties using `any()` lambda operator.
+
+**Example - WRONG**:
+```typescript
+{
+  entitySet: 'A_BusinessPartner',
+  filter: "to_BusinessPartnerAddress/any(d: d/Country eq 'ES')"  // ❌ Not supported
+}
+```
+
+**Solution - CORRECT**:
+```typescript
+// Option 1: Expand and filter locally
+{
+  entitySet: 'A_BusinessPartner',
+  expand: 'to_BusinessPartnerAddress'
+}
+// Then in your code: filter BPs that have addresses with Country='ES'
+
+// Option 2: Reverse query - query the navigation EntitySet directly
+{
+  entitySet: 'A_BusinessPartnerAddress',
+  filter: "Country eq 'ES'"
+}
+// Result will include BusinessPartner IDs you can use
+```
+
+#### 4. 📧 Deep Navigation Data Requires Direct Calls
+
+**Problem**: Data like emails, phone numbers, bank accounts require direct EntitySet queries for filtering/selecting.
+
+**Example - Email addresses**:
+```typescript
+// Step 1: Get Business Partner with addresses
+{
+  entitySet: 'A_BusinessPartner',
+  key: '1000001',
+  expand: 'to_BusinessPartnerAddress'
+}
+// Note the AddressID from results
+
+// Step 2: Get emails for that address
+{
+  entitySet: 'A_AddressEmailAddress',
+  filter: "AddressID eq '12345'",
+  select: 'EmailAddress,IsDefaultEmailAddress'
+}
+```
+
+**Example - Bank accounts**:
+```typescript
+{
+  entitySet: 'A_BusinessPartnerBank',
+  filter: "BusinessPartner eq '1000001'",
+  select: 'BankAccount,BankNumber,BankCountryKey'
+}
+```
+
+**Example - Roles**:
+```typescript
+{
+  entitySet: 'A_BusinessPartnerRole',
+  filter: "BusinessPartner eq '1000001' and BusinessPartnerRole eq 'FLCU00'"
+}
+```
+
+### Best Practices for S/4HANA 2022 On-Premise
+
+1. **Prioritize Compatibility**: Use simple expands without $select, bring complete data and filter locally
+2. **Use $top on Root Only**: Limit results with `$top` on the root entity, never on navigation properties
+3. **Always Include $format=json**: Automatically included by the client
+4. **Break Complex Queries**: Divide into multiple simple calls instead of one complex query
+5. **Direct EntitySet Calls**: For specific navigation data needs, call the navigation EntitySet directly
+6. **Test Incrementally**: Start with simple queries, add complexity gradually
+7. **Use Schema Info**: Call `sap_get_schema_info` to discover available EntitySets and navigation properties
+
+### AI Agent Guidance
+
+When working with this MCP server, the AI should:
+
+1. **Detect Incompatible Patterns**: The `sap_odata_query` tool includes validation that will warn about incompatible query patterns
+2. **Suggest Alternatives**: When validation fails, the tool provides specific alternative approaches
+3. **Multi-Call Strategy**: For complex requirements, suggest breaking into multiple sequential calls:
+   - Call 1: Get root entity with basic expand
+   - Call 2: Get detailed navigation data with filters/selects
+   - Combine results in code
+4. **Context from Expand**: When data is available in an expand, use it directly rather than making additional calls
+5. **Filter Locally When Possible**: If expand returns the needed data, filter in application code
+
+### Common Scenarios
+
+#### Scenario: Find Business Partners in a specific country
+
+```typescript
+// ❌ WRONG - any() not supported
+{
+  entitySet: 'A_BusinessPartner',
+  filter: "to_BusinessPartnerAddress/any(d: d/Country eq 'US')"
+}
+
+// ✅ CORRECT - Approach 1: Expand and filter locally
+{
+  entitySet: 'A_BusinessPartner',
+  expand: 'to_BusinessPartnerAddress',
+  top: 100
+}
+// Filter locally: BPs where any address has Country='US'
+
+// ✅ CORRECT - Approach 2: Reverse query
+{
+  entitySet: 'A_BusinessPartnerAddress',
+  filter: "Country eq 'US'",
+  select: 'BusinessPartner,AddressID,City'
+}
+// Get unique BusinessPartner IDs from results
+```
+
+#### Scenario: Get specific BP with address and emails
+
+```typescript
+// Call 1: Get BP with addresses
+{
+  entitySet: 'A_BusinessPartner',
+  key: '1000001',
+  expand: 'to_BusinessPartnerAddress'
+}
+
+// From response, note AddressID (e.g., '12345')
+
+// Call 2: Get emails for that address
+{
+  entitySet: 'A_AddressEmailAddress',
+  filter: "AddressID eq '12345'"
+}
+```
+
+#### Scenario: Search BPs by name, need only specific fields
+
+```typescript
+// ✅ CORRECT - No expand, can use select
+{
+  entitySet: 'A_BusinessPartner',
+  filter: "substringof('Smith',BusinessPartnerFullName)",
+  select: 'BusinessPartner,BusinessPartnerFullName,BusinessPartnerCategory',
+  top: 10
+}
+```
+
+#### Scenario: Get BP with all navigation data
+
+```typescript
+// ✅ CORRECT - Multiple expands, no select
+{
+  entitySet: 'A_BusinessPartner',
+  key: '1000001',
+  expand: 'to_BusinessPartnerAddress,to_BusinessPartnerRole,to_BusinessPartnerBank'
+}
+// Get all data, filter in code if needed
+```
 
 ### HTTP Transport & Session Management
 
@@ -157,6 +471,105 @@ Configuration in `k8s/03-deployment.yaml`:
 - Resources: 256Mi-512Mi memory, 100m-500m CPU
 - Probes use `/health` endpoint
 
+### Kubernetes Configuration
+
+**IMPORTANT:** This project uses a local `.kubeconfig.yaml` file located in the project root.
+
+**All kubectl commands MUST use the `--kubeconfig` flag:**
+```bash
+kubectl --kubeconfig=".kubeconfig.yaml" <command>
+```
+
+**Examples:**
+```bash
+# Get pods
+kubectl --kubeconfig=".kubeconfig.yaml" get pods -n mcp-cap-integration
+
+# Apply deployment
+kubectl --kubeconfig=".kubeconfig.yaml" apply -f k8s/
+
+# Check logs
+kubectl --kubeconfig=".kubeconfig.yaml" logs -n mcp-cap-integration -l app=mcp-service
+
+# Wait for pod readiness
+kubectl --kubeconfig=".kubeconfig.yaml" wait --for=condition=ready pod -l app=mcp-service -n mcp-cap-integration --timeout=60s
+```
+
+**Never use kubectl without the --kubeconfig flag in this project.**
+
+## Cloud Foundry Deployment
+
+The project supports deployment to both **SAP BTP Kyma** and **SAP BTP Cloud Foundry** runtimes with automatic platform detection.
+
+### Platform Detection
+
+The code automatically detects the runtime environment and adapts:
+
+- **Kyma**: Detects `KUBERNETES_SERVICE_HOST` environment variable
+  - Reads configuration from environment variables (ConfigMaps/Secrets)
+  - Uses Kyma-specific connectivity proxy: `connectivity-proxy.kyma-system.svc.cluster.local:20003`
+  - Deploys using `kubectl apply -f k8s/`
+
+- **Cloud Foundry**: Detects `VCAP_SERVICES` environment variable
+  - Reads configuration from VCAP_SERVICES (automatic service bindings)
+  - Uses CF connectivity proxy from bound service credentials
+  - Deploys using `cf push`
+
+- **Local**: Falls back when neither Kyma nor CF detected
+  - Reads from environment variables (.env file)
+  - Uses localhost connectivity proxy
+
+**No code changes needed** - the platform is detected at runtime via `platform-detector.ts`.
+
+### Cloud Foundry Prerequisites
+
+1. **CF CLI installed**: `cf --version`
+2. **BTP Services created**:
+   - Destination Service: `cf create-service destination lite mcp-destination-service`
+   - Connectivity Service: `cf create-service connectivity lite mcp-connectivity-service`
+3. **Destination configured** in BTP Cockpit with OnPremise proxy type
+4. **manifest.yml files** configured with correct IAS URLs and service bindings
+
+### Deployment Commands
+
+```bash
+# Login to Cloud Foundry
+cf login -a https://api.cf.eu10-005.hana.ondemand.com
+
+# Build applications
+cd mcp-service && npm run build
+cd ../cap-service && npm install
+
+# Deploy CAP Service first
+cd cap-service
+cf push
+
+# Deploy MCP Service
+cd ../mcp-service
+cf push
+```
+
+### Key Differences: Kyma vs Cloud Foundry
+
+| Aspect | Kyma | Cloud Foundry |
+|--------|------|---------------|
+| **Deployment** | `kubectl apply -f k8s/` | `cf push` |
+| **Config** | ConfigMaps + Secrets | manifest.yml + VCAP_SERVICES |
+| **Service Bindings** | Manual (env vars) | Automatic (VCAP_SERVICES) |
+| **Connectivity Proxy** | Pod in kyma-system | Service with credentials |
+| **Build** | Docker build + push | Buildpack automatic |
+
+### Files
+
+- `mcp-service/manifest.yml`: MCP Service deployment config
+- `cap-service/manifest.yml`: CAP Service deployment config
+- `mcp-service/.cfignore`: Files to exclude from CF deployment
+- `cap-service/.cfignore`: Files to exclude from CF deployment
+- `mcp-service/src/sap-onpremise/platform-detector.ts`: Platform detection utility
+- `docs/CLOUD-FOUNDRY-DEPLOYMENT.md`: Comprehensive CF deployment guide
+
+**See [docs/CLOUD-FOUNDRY-DEPLOYMENT.md](docs/CLOUD-FOUNDRY-DEPLOYMENT.md) for complete Cloud Foundry deployment instructions.**
+
 ## MCP Client Configuration
 
 ### Claude Desktop
@@ -183,7 +596,7 @@ Configuration in `k8s/03-deployment.yaml`:
   "mcpServers": {
     "mcp-cap-integration": {
       "type": "http",
-      "url": "https://mcp-service.a7dda9c.kyma.ondemand.com/mcp",
+      "url": "https://mcp-service.c-3efd68e.kyma.ondemand.com/mcp",
       "headers": {
         "Authorization": "Bearer YOUR_ACCESS_TOKEN"
       }
@@ -203,7 +616,7 @@ Configuration in `k8s/03-deployment.yaml`:
 {
   "mcpServers": {
     "mcp-cap-service": {
-      "url": "https://mcp-service.a7dda9c.kyma.ondemand.com/mcp",
+      "url": "https://mcp-service.c-3efd68e.kyma.ondemand.com/mcp",
       "oauth": {
         "enabled": true,
         "clientId": "your-client-id",

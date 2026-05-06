@@ -17,6 +17,7 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "express-oauth2-jwt-bearer": "^1.7.1",
+    "http-proxy-agent": "^7.0.2",
     "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^3.2.0"
   },

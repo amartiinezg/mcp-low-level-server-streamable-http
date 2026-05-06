@@ -1,0 +1,10 @@
+apiVersion: services.cloud.sap.com/v1
+kind: ServiceInstance
+metadata:
+  name: connectivity-service
+  namespace: mcp-cap-integration
+spec:
+  serviceOfferingName: connectivity
+  servicePlanName: connectivity_proxy
+  parameters:
+    version: "2.0"
